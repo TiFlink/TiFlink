@@ -13,5 +13,5 @@ dependencies {
 
 application {
     // Define the main class for the application.
-    mainClass = 'org.tiflink.demo.DemoFlinkJob'
+    mainClass = 'org.tiflink.examples.DemoFlinkJob'
 }

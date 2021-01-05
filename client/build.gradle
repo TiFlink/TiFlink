@@ -4,4 +4,9 @@
 
 plugins {
     id 'org.tiflink.java-library-conventions'
+    id 'com.google.protobuf' version '0.8.14'
+}
+
+dependencies {
+    implementation 'org.tikv:tikv-client-java:3.0.1'
 }
