@@ -20,7 +20,7 @@ public class CDCClient implements AutoCloseable, StreamObserver<Event> {
     private final Logger logger = LoggerFactory.getLogger(CDCClient.class);
 
     private final boolean started = false;
-    private final ResolvedTsManager tsManager;
+    private final RegionTsManager tsManager;
     private final List<RegionCDCClient> regionClients;
     private final BlockingQueue<Event> eventsBuffer;
     private Iterator<Row> currentIter = null;
@@ -28,7 +28,7 @@ public class CDCClient implements AutoCloseable, StreamObserver<Event> {
     public CDCClient(final TiConfiguration conf, final RegionCDCClientBuilder clientBuilder,
             final List<TiRegion> regions, final long startTs) {
         assert(conf.getIsolationLevel().equals(IsolationLevel.SI)); // only support SI for now
-        this.tsManager = new ResolvedTsManager(regions);
+        this.tsManager = new RegionTsManager(regions);
         this.regionClients = regions.stream()
             .map(region -> clientBuilder.build(startTs, region, this))
             .collect(Collectors.toList());
@@ -73,8 +73,12 @@ public class CDCClient implements AutoCloseable, StreamObserver<Event> {
         }
     }
 
-    synchronized public long getResolvedTs() {
-        return tsManager.getMinResolvedTs();
+    synchronized public long getMinResolvedTs() {
+        return tsManager.getMinTs();
+    }
+
+    synchronized public long getMaxResolvedTs() {
+        return tsManager.getMaxTs();
     }
 
     synchronized public boolean isStarted() {

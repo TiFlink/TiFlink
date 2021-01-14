@@ -9,4 +9,5 @@ plugins {
 dependencies {
     implementation project(':utils')
     implementation project(':client')
+    implementation project(':flink')
 }
