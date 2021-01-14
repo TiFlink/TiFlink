@@ -1,105 +1,98 @@
 package org.tikv.cdc;
 
-import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
-import java.util.PriorityQueue;
-import java.util.TreeMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tikv.cdc.RegionCDCClient.RegionCDCClientBuilder;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.region.TiRegion;
-import org.tikv.common.util.ConcreteBackOffer;
-import org.tikv.kvproto.Cdcpb.ChangeDataEvent;
 import org.tikv.kvproto.Cdcpb.Event;
 import org.tikv.kvproto.Cdcpb.Event.Row;
+import org.tikv.kvproto.Kvrpcpb.IsolationLevel;
+import shade.io.grpc.stub.StreamObserver;
 
-public class CDCClient implements AutoCloseable {
-    private final TiConfiguration conf;
-    private final RegionCDCClientBuilder clientBuilder;
+public class CDCClient implements AutoCloseable, StreamObserver<Event> {
     private final Logger logger = LoggerFactory.getLogger(CDCClient.class);
-    private final TreeMap<TiRegion, RegionCDCClient> regionClients;
-    private final PriorityQueue<RegionState> regionStates;
+
+    private final boolean started = false;
+    private final ResolvedTsManager tsManager;
+    private final List<RegionCDCClient> regionClients;
+    private final BlockingQueue<Event> eventsBuffer;
+    private Iterator<Row> currentIter = null;
 
     public CDCClient(final TiConfiguration conf, final RegionCDCClientBuilder clientBuilder,
             final List<TiRegion> regions, final long startTs) {
-        this.conf = conf;
-        this.clientBuilder = clientBuilder; 
-        this.regionClients = new TreeMap<>((a, b) -> a.getRowEndKey().compareTo(b.getRowEndKey()));
-        this.regionStates = new PriorityQueue<>(
-            regions.stream()
-                .map((r) -> RegionState.create(r, startTs))
-                .collect(Collectors.toList())
-        );
+        assert(conf.getIsolationLevel().equals(IsolationLevel.SI)); // only support SI for now
+        this.tsManager = new ResolvedTsManager(regions);
+        this.regionClients = regions.stream()
+            .map(region -> clientBuilder.build(startTs, region, this))
+            .collect(Collectors.toList());
+
+        // TODO: Add a dedicated config to TiConfiguration for queue size.
+        this.eventsBuffer = new ArrayBlockingQueue<>(conf.getTableScanConcurrency() * conf.getScanBatchSize());
     }
 
-    synchronized public void close() {
-        for (RegionCDCClient client : regionClients.values()) {
-            try {
-              client.close();
-            } catch (final Exception e) {
-                logger.error("failed to close RegionCDCClient", e);
+    synchronized public void start() {
+        if (!started) {
+            for (final RegionCDCClient client: regionClients) {
+                client.start();
             }
         }
     }
 
-    synchronized public List<Row> pullRows() {
-        if (regionStates.isEmpty()) {
-            return Collections.emptyList();
+    synchronized public Row get() throws InterruptedException {
+        if (currentIter != null && currentIter.hasNext()) {
+            return currentIter.next();
         }
 
-        final RegionState next = regionStates.poll();
-        final RegionCDCClient client = regionClients.computeIfAbsent(next.region, clientBuilder::build);
-        final ChangeDataEvent cdcEvent = client.getChangeDataEvent(ConcreteBackOffer.newGetBackOff(), next.timestamp);
-
-        final List<Event> result = cdcEvent.getEventsList();
-        // TODO: implement this method
-        return Collections.emptyList();
+        final Event event = eventsBuffer.poll(1, TimeUnit.SECONDS);
+        switch (event.getEventCase()) {
+            case ENTRIES:
+                currentIter = event.getEntries().getEntriesList().iterator();
+                // fallthrough, let caller retry
+            case RESOLVED_TS:
+                tsManager.update(event.getRegionId(), event.getResolvedTs());
+                // fallthrough, let caller retry
+            default:
+                return null;
+        }
     }
 
-    synchronized public long getTimestamp() {
-        return regionStates.stream().mapToLong(r -> r.timestamp).min().orElse(0);
+    synchronized public void close() {
+        for (final RegionCDCClient client : regionClients) {
+            try {
+                client.close();
+            } catch (final Throwable e) {
+                logger.error(String.format("failed to close region client %d", client.getRegion().getId()), e);
+            }
+        }
     }
 
     synchronized public long getResolvedTs() {
-        return regionStates.stream().mapToLong(r -> r.timestamp).min().orElse(0);
+        return tsManager.getMinResolvedTs();
     }
 
-    static private class RegionState implements Comparable<RegionState> {
-        final TiRegion region;
-        final long timestamp;
-        final long resolvedTs;
+    synchronized public boolean isStarted() {
+        return started;
+    }
 
-        private RegionState(final TiRegion region, final long timestamp) {
-            this(region, timestamp, timestamp);
-        }
+    @Override
+    public void onCompleted() {
+        // should never trigger for CDC request
+    }
 
-        private RegionState(final TiRegion region, final long timestamp, final long resolvedTs) {
-            this.region = region;
-            this.timestamp = Math.max(timestamp, resolvedTs);
-            this.resolvedTs = resolvedTs;
-        }
+    @Override
+    public void onError(final Throwable err) {
+        logger.error("error:", err);
+    }
 
-        public RegionState with(final long timestamp, final long resolvedTs) {
-            return new RegionState(region, timestamp, resolvedTs);
-        }
-
-        public RegionState withTimestamp(final long timestamp) {
-            return new RegionState(region, timestamp, resolvedTs);
-        }
-
-        public RegionState withResolvedTs(final long resolvedTs) {
-            return new RegionState(region, timestamp, resolvedTs);
-        }
-
-        static public RegionState create(final TiRegion region, final long timestamp) {
-            return new RegionState(region, timestamp);
-        }
-
-        @Override
-        public int compareTo(final RegionState that) {
-            return Long.compare(this.timestamp, that.timestamp);
-        }
+    @Override
+    public void onNext(final Event event) {
+        eventsBuffer.offer(event);
     }
 }
