@@ -20,15 +20,16 @@ public class CDCClient implements AutoCloseable, StreamObserver<Event> {
     private final Logger logger = LoggerFactory.getLogger(CDCClient.class);
 
     private final boolean started = false;
-    private final RegionTsManager tsManager;
+    private final RegionStateManager rsManager;
     private final List<RegionCDCClient> regionClients;
     private final BlockingQueue<Event> eventsBuffer;
+    private Event currentEvent = null;
     private Iterator<Row> currentIter = null;
 
     public CDCClient(final TiConfiguration conf, final RegionCDCClientBuilder clientBuilder,
             final List<TiRegion> regions, final long startTs) {
         assert(conf.getIsolationLevel().equals(IsolationLevel.SI)); // only support SI for now
-        this.tsManager = new RegionTsManager(regions);
+        this.rsManager = new RegionStateManager(regions);
         this.regionClients = regions.stream()
             .map(region -> clientBuilder.build(startTs, region, this))
             .collect(Collectors.toList());
@@ -47,16 +48,21 @@ public class CDCClient implements AutoCloseable, StreamObserver<Event> {
 
     synchronized public Row get() throws InterruptedException {
         if (currentIter != null && currentIter.hasNext()) {
-            return currentIter.next();
+            final Row res = currentIter.next();
+            if (res.isInitialized()) {
+                rsManager.markInitialized(currentEvent.getRegionId());
+                return null;
+            }
         }
 
         final Event event = eventsBuffer.poll(1, TimeUnit.SECONDS);
         switch (event.getEventCase()) {
             case ENTRIES:
+                currentEvent = event;
                 currentIter = event.getEntries().getEntriesList().iterator();
                 // fallthrough, let caller retry
             case RESOLVED_TS:
-                tsManager.update(event.getRegionId(), event.getResolvedTs());
+                rsManager.updateTs(event.getRegionId(), event.getResolvedTs());
                 // fallthrough, let caller retry
             default:
                 return null;
@@ -74,15 +80,19 @@ public class CDCClient implements AutoCloseable, StreamObserver<Event> {
     }
 
     synchronized public long getMinResolvedTs() {
-        return tsManager.getMinTs();
+        return rsManager.getMinTs();
     }
 
     synchronized public long getMaxResolvedTs() {
-        return tsManager.getMaxTs();
+        return rsManager.getMaxTs();
     }
 
     synchronized public boolean isStarted() {
         return started;
+    }
+
+    synchronized public boolean isInitialized() {
+        return rsManager.isInitialized();
     }
 
     @Override

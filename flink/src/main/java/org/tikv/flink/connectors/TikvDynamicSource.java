@@ -1,8 +1,11 @@
 package org.tikv.flink.connectors;
 
+import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.source.DynamicTableSource;
+import org.apache.flink.table.connector.source.ScanTableSource;
+import org.apache.flink.types.RowKind;
 
-public class TikvDynamicSource implements DynamicTableSource {
+public class TikvDynamicSource implements DynamicTableSource, ScanTableSource {
 
   @Override
   public DynamicTableSource copy() {
@@ -12,7 +15,19 @@ public class TikvDynamicSource implements DynamicTableSource {
 
   @Override
   public String asSummaryString() {
-    // TODO Auto-generated method stub
+    return "TiKV dynamic table source";
+  }
+
+  @Override
+  public ChangelogMode getChangelogMode() {
+    return ChangelogMode.newBuilder()
+        .addContainedKind(RowKind.INSERT)
+        .addContainedKind(RowKind.DELETE)
+        .build();
+  }
+
+  @Override
+  public ScanRuntimeProvider getScanRuntimeProvider(ScanContext runtimeProviderContext) {
     return null;
   }
     
