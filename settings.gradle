@@ -8,4 +8,4 @@
  */
 
 rootProject.name = 'tiflink'
-include('client', 'utils', 'flink', 'examples')
+include('client', 'flink', 'examples')

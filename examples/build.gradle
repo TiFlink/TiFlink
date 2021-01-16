@@ -7,19 +7,21 @@ plugins {
 }
 
 dependencies {
-    implementation project(':utils')
     implementation project(':client')
+    implementation project(':flink')
 
     implementation 'log4j:log4j:1.2.17'
     implementation 'org.slf4j:slf4j-api:1.7.30'
     implementation 'org.slf4j:slf4j-log4j12:1.7.30'
 
-    implementation 'org.tikv:tikv-client-java:3.0.1'
+    implementation 'org.tikv:tikv-client-java:4.0.0-SNAPSHOT'
 
-
+    implementation 'org.apache.flink:flink-streaming-java_2.12:1.12.0'
+    implementation 'org.apache.flink:flink-table-api-java-bridge_2.12:1.12.0'
+    implementation 'org.apache.flink:flink-clients_2.12:1.12.0'
 }
 
 application {
     // Define the main class for the application.
-    mainClass = 'org.tikv.tiflink.CDCClientExample'
+    mainClass = 'org.tikv.tiflink.TiFlinkExample'
 }

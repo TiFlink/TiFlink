@@ -3,7 +3,6 @@ package org.tikv.flink.connectors;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
@@ -75,7 +74,8 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
             taskRegions.isEmpty();
         }
 
-        final RegionCDCClientBuilder clientBuilder = new RegionCDCClientBuilder(conf, session.getRegionManager());
+        final RegionCDCClientBuilder clientBuilder =
+            new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
         client = new CDCClient(conf, clientBuilder, taskRegions, startTs);
 
         prewrites = new TreeMap<>();
@@ -133,7 +133,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
         while (!commits.isEmpty() && commits.firstKey().timestamp < timestamp) {
             final Row commitRow = commits.pollFirstEntry().getValue();
             final Row prewriteRow = prewrites.remove(RowKeyWithTs.ofStart(commitRow));
-            ctx.collect(decodeToRowData(prewriteRow));
+            ctx.collectWithTimestamp(decodeToRowData(prewriteRow), timestamp);
         }
         ctx.emitWatermark(new Watermark(timestamp));
     }
