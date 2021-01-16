@@ -29,6 +29,8 @@ import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.region.TiRegion;
 import org.tikv.kvproto.Cdcpb.Event.Row;
+import org.tikv.kvproto.Kvrpcpb.KvPair;
+import org.tikv.txn.KVClient;
 
 public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     implements CheckpointListener, CheckpointedFunction, CheckpointTrigger, ResultTypeQueryable<RowData> {
@@ -95,7 +97,22 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
             logger.info("No regions to watch, enter idle state");
             ctx.markAsTemporarilyIdle();
         }
+        // scan original table first
 
+
+        final KVClient scanClient = session.createKVClient();
+        for (final TiRegion region : taskRegions) {
+            for (final KvPair pair : scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
+                if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
+                    ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
+                }
+            }
+        }
+
+        long resolvedTs = startTs;
+        ctx.emitWatermark(new Watermark(resolvedTs));
+        
+        // start consuming CDC
         client.start();
 
         // main loop
@@ -103,7 +120,6 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
             handleRow(client.get());
          }
 
-        long resolvedTs = 0;
 
         while (true) {
             handleRow(client.get());
@@ -147,7 +163,6 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
             final Row commitRow = commits.pollFirstEntry().getValue();
             final Row prewriteRow = prewrites.remove(RowKeyWithTs.ofStart(commitRow));
             final RowData rowData = decodeToRowData(prewriteRow);
-            logger.info("emit: {}, {}, {}", prewriteRow, commitRow, rowData);
             ctx.collectWithTimestamp(rowData, timestamp);
         }
         ctx.emitWatermark(new Watermark(timestamp));
@@ -197,7 +212,15 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
           default:
             throw new IllegalArgumentException("Unknown Row Op Type: " + row.getOpType().toString());
         }
+    }
 
+    protected RowData decodeToRowData(final KvPair kvPair) {
+        final RowKey rowKey = RowKey.decode(kvPair.getKey().toByteArray());
+        final long handle = rowKey.getHandle();
+        return GenericRowData.ofKind(
+                RowKind.INSERT,
+                TypeUtils.getObjectsWithDataTypes(
+                    TiTableCodec.decodeRow(kvPair.getValue().toByteArray(), handle, tableInfo), tableInfo));
     }
 
     protected static class RowKeyWithTs implements Comparable<RowKeyWithTs> {
