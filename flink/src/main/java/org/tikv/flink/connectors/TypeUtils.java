@@ -4,17 +4,24 @@ import static java.lang.String.format;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.data.DecimalData;
 import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.RowData.FieldGetter;
 import org.apache.flink.table.data.StringData;
 import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.DataType;
+import org.apache.flink.table.types.logical.DistinctType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.utils.LogicalTypeChecks;
 import org.apache.flink.types.Row;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.types.StringType;
@@ -91,7 +98,6 @@ public class TypeUtils {
     }
   }
 
-
   /**
    * transform TiKV java object to Flink java object by given Flink Datatype
    *
@@ -162,8 +168,23 @@ public class TypeUtils {
     return Optional.of(object);
   }
 
-  public static Optional<Object> getObjectWithDataType(Object object, DataType dataType) {
+  public static Optional<Object> getObjectWithDataType(final Object object, final DataType dataType) {
     return getObjectWithDataType(object, dataType, null);
+  }
+
+  public static Object[] toObjects(final RowData row, final FieldGetter[] fieldGetters) {
+      final Object[] res = new Object[row.getArity()];
+      for (int i = 0; i < res.length; i++) {
+          res[i] = fieldGetters[i].getFieldOrNull(row);
+          if (res[i] instanceof StringData) {
+              res[i] = res[i].toString();
+          } else if (res[i] instanceof TimestampData) {
+              res[i] = ((TimestampData)res[i]).toTimestamp();
+          } else if (res[i] instanceof DecimalData) {
+              res[i] = ((DecimalData)res[i]).toBigDecimal();
+          }
+      }
+      return res;
   }
 
   /**
@@ -226,4 +247,106 @@ public class TypeUtils {
     }
     return result;
   }
+
+  public static boolean isIntType(final org.tikv.common.types.DataType tp) {
+      switch (tp.getType()) {
+        case TypeBit:
+        case TypeInt24:
+        case TypeLong:
+        case TypeShort:
+            return true;
+        default:
+            return false;
+      }
+  }
+
+  public static FieldGetter createFieldGetter(final LogicalType fieldType, final int fieldPos) {
+		final FieldGetter fieldGetter;
+		// ordered by type root definition
+		switch (fieldType.getTypeRoot()) {
+			case CHAR:
+			case VARCHAR:
+				fieldGetter = row -> row.getString(fieldPos);
+				break;
+			case BOOLEAN:
+				fieldGetter = row -> row.getBoolean(fieldPos);
+				break;
+			case BINARY:
+			case VARBINARY:
+				fieldGetter = row -> row.getBinary(fieldPos);
+				break;
+			case DECIMAL:
+				final int decimalPrecision = LogicalTypeChecks.getPrecision(fieldType);
+				final int decimalScale = LogicalTypeChecks.getScale(fieldType);
+				fieldGetter = row -> row.getDecimal(fieldPos, decimalPrecision, decimalScale);
+				break;
+			case TINYINT:
+				fieldGetter = row -> row.getByte(fieldPos);
+				break;
+			case SMALLINT:
+				fieldGetter = row -> row.getShort(fieldPos);
+				break;
+			case INTEGER:
+			case TIME_WITHOUT_TIME_ZONE:
+			case INTERVAL_YEAR_MONTH:
+				fieldGetter = row -> row.getInt(fieldPos);
+				break;
+			case DATE:
+				fieldGetter = (row -> {
+                    final int days = row.getInt(fieldPos);
+                    final Instant instant = Instant.EPOCH.plus(days, ChronoUnit.DAYS);
+                    return Timestamp.from(instant);
+                });
+				break;
+			case BIGINT:
+			case INTERVAL_DAY_TIME:
+				fieldGetter = row -> row.getLong(fieldPos);
+				break;
+			case FLOAT:
+				fieldGetter = row -> row.getFloat(fieldPos);
+				break;
+			case DOUBLE:
+				fieldGetter = row -> row.getDouble(fieldPos);
+				break;
+			case TIMESTAMP_WITHOUT_TIME_ZONE:
+			case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+				final int timestampPrecision = LogicalTypeChecks.getPrecision(fieldType);
+				fieldGetter = row -> row.getTimestamp(fieldPos, timestampPrecision);
+				break;
+			case TIMESTAMP_WITH_TIME_ZONE:
+				throw new UnsupportedOperationException();
+			case ARRAY:
+				fieldGetter = row -> row.getArray(fieldPos);
+				break;
+			case MULTISET:
+			case MAP:
+				fieldGetter = row -> row.getMap(fieldPos);
+				break;
+			case ROW:
+			case STRUCTURED_TYPE:
+				final int rowFieldCount = LogicalTypeChecks.getFieldCount(fieldType);
+				fieldGetter = row -> row.getRow(fieldPos, rowFieldCount);
+				break;
+			case DISTINCT_TYPE:
+				fieldGetter = createFieldGetter(((DistinctType) fieldType).getSourceType(), fieldPos);
+				break;
+			case RAW:
+				fieldGetter = row -> row.getRawValue(fieldPos);
+				break;
+			case NULL:
+			case SYMBOL:
+			case UNRESOLVED:
+			default:
+				throw new IllegalArgumentException();
+		}
+		if (!fieldType.isNullable()) {
+			return fieldGetter;
+		}
+		return row -> {
+			if (row.isNullAt(fieldPos)) {
+				return null;
+			}
+			return fieldGetter.getFieldOrNull(row);
+		};
+	}
 }

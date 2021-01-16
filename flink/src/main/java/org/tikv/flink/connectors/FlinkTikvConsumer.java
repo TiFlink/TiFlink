@@ -66,7 +66,8 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     }
 
     @Override
-    public void open(final Configuration parameters) throws Exception {
+    public void open(final Configuration config) throws Exception {
+        super.open(config);
         session = TiSession.create(conf);
 
         final int numOfTasks = this.getRuntimeContext().getNumberOfParallelSubtasks();
@@ -176,24 +177,23 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     }
 
     @Override
-    public void triggerCheckpoint(long checkpointId) throws FlinkException {
-        // TODO Auto-generated method stub
-
+    public void triggerCheckpoint(final long checkpointId) throws FlinkException {
+        logger.info("triggered checkpoint: {}", checkpointId);
     }
 
     @Override
-    public void snapshotState(FunctionSnapshotContext context) throws Exception {
-        // TODO Auto-generated method stub
+    public void snapshotState(final FunctionSnapshotContext context) throws Exception {
+        logger.info("snapshotState checkpoint: {}", context.getCheckpointId());
     }
 
     @Override
-    public void initializeState(FunctionInitializationContext context) throws Exception {
-        // TODO Auto-generated method stub
+    public void initializeState(final FunctionInitializationContext context) throws Exception {
+        logger.info("initialize checkpoint");
     }
 
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
-        // TODO Auto-generated method stub
+        logger.info("checkpoint completed: {}", checkpointId);
     }
 
     protected RowData decodeToRowData(final Row row) {

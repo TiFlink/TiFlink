@@ -10,6 +10,7 @@ import org.apache.flink.table.factories.DynamicTableSinkFactory;
 import org.apache.flink.table.factories.DynamicTableSourceFactory;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.factories.FactoryUtil.TableFactoryHelper;
+import org.apache.flink.table.types.DataType;
 import shade.com.google.common.collect.ImmutableSet;
 
 public class TikvDynamicTableFactory implements DynamicTableSourceFactory, DynamicTableSinkFactory {
@@ -36,8 +37,16 @@ public class TikvDynamicTableFactory implements DynamicTableSourceFactory, Dynam
 
     @Override
     public DynamicTableSink createDynamicTableSink(final Context context) {
-        // TODO Auto-generated method stub
-        return null;
+        final TableFactoryHelper helper = FactoryUtil.createTableFactoryHelper(this, context);
+        final ReadableConfig tableOptions = helper.getOptions();
+
+        final String pdAddress = tableOptions.get(TikvOptions.PDADDRESS);
+        final String database = tableOptions.get(TikvOptions.DATABASE);
+        final String table = tableOptions.get(TikvOptions.TABLE);
+
+        final DataType tp = context.getCatalogTable().getSchema().toPhysicalRowDataType();
+
+        return new TikvDynamicSink(pdAddress, database, table, tp);
     }
 
     @Override
@@ -49,7 +58,6 @@ public class TikvDynamicTableFactory implements DynamicTableSourceFactory, Dynam
         final String database = tableOptions.get(TikvOptions.DATABASE);
         final String table = tableOptions.get(TikvOptions.TABLE);
 
-        System.out.println(tableOptions);
 
         return new TikvDynamicSource(pdAddress, database, table);
     }

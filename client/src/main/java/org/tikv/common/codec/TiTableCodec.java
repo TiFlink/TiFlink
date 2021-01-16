@@ -18,20 +18,53 @@ package org.tikv.common.codec;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import org.tikv.common.codec.Codec.IntegerCodec;
 import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.types.IntegerType;
+import org.tikv.common.types.DataType.EncodeType;
 
 public class TiTableCodec {
 
-    /**
-     * New Row Format: Reference
-     * https://github.com/pingcap/tidb/blob/952d1d7541a8e86be0af58f5b7e3d5e982bab34e/docs/design/2018-07-19-row-format.md
-     *
-     * <p>- version, flag, numOfNotNullCols, numOfNullCols, notNullCols, nullCols, notNullOffsets,
-     * notNullValues
-     */
     public static byte[] encodeRow(
+            List<TiColumnInfo> columnInfos,
+            Object[] values,
+            boolean isPkHandle,
+            boolean encodeWithNewRowFormat) throws IllegalAccessException {
+        if (columnInfos.size() != values.length) {
+            throw new IllegalAccessException(
+                    String.format(
+                        "encodeRow error: data and columnID count not " + "match %d vs %d",
+                        columnInfos.size(), values.length));
+        }
+        if (encodeWithNewRowFormat) {
+            return encodeRowV2(columnInfos, values, isPkHandle);
+        }
+        return encodeRowV1(columnInfos, values, isPkHandle);
+    }
+
+    protected static byte[] encodeRowV1(
+            List<TiColumnInfo> columnInfos, Object[] values, boolean isPkHandle) {
+        CodecDataOutput cdo = new CodecDataOutput();
+
+        for (int i = 0; i < columnInfos.size(); i++) {
+            TiColumnInfo col = columnInfos.get(i);
+            // skip pk is handle case
+            if (col.isPrimaryKey() && isPkHandle) {
+                continue;
+            }
+            IntegerCodec.writeLongFully(cdo, col.getId(), false);
+            col.getType().encode(cdo, EncodeType.VALUE, values[i]);
+        }
+
+        // We could not set nil value into kv.
+        if (cdo.toBytes().length == 0) {
+            return new byte[] {Codec.NULL_FLAG};
+        }
+
+        return cdo.toBytes();
+            }
+    public static byte[] encodeRowV2(
             List<TiColumnInfo> columnInfos, Object[] values, boolean isPkHandle) {
         RowEncoderV2 encoder = new RowEncoderV2();
         List<TiColumnInfo> columnInfoList = new ArrayList<>();
