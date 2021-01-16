@@ -2,6 +2,7 @@ package org.tikv.flink.connectors;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -35,6 +36,7 @@ import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.meta.TiDBInfo;
 import org.tikv.common.meta.TiTableInfo;
+import shade.com.google.common.collect.ImmutableMap;
 
 public class TiFlinkCatalog implements Catalog {
 
@@ -56,7 +58,7 @@ public class TiFlinkCatalog implements Catalog {
 
     @Override
     public void open() throws CatalogException {
-        session = Optional.of(TiSession.create(conf));
+        session = Optional.ofNullable(TiSession.create(conf));
     }
 
     @Override
@@ -120,40 +122,49 @@ public class TiFlinkCatalog implements Catalog {
     }
 
     @Override
-    public List<String> listTables(String databaseName)
+    public List<String> listTables(final String databaseName)
         throws DatabaseNotExistException, CatalogException {
-        return session
-            .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)))
-            .stream()
-            .flatMap(db -> db.getTables().stream())
+        final Optional<TiDBInfo> db = 
+            session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)));
+        if (db.isEmpty()) {
+            throw new DatabaseNotExistException(name, databaseName);
+        }
+
+        return session.stream().flatMap(s -> s.getCatalog().listTables(db.get()).stream())
             .filter(Predicate.not(TiTableInfo::isView))
             .map(TiTableInfo::getName)
             .collect(Collectors.toList());
     }
 
     @Override
-    public List<String> listViews(String databaseName)
+    public List<String> listViews(final String databaseName)
         throws DatabaseNotExistException, CatalogException {
-        return session
-            .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)))
-            .stream()
-            .flatMap(db -> db.getTables().stream())
+        final Optional<TiDBInfo> db = 
+            session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)));
+        if (db.isEmpty()) {
+            throw new DatabaseNotExistException(name, databaseName);
+        }
+
+        return session.stream().flatMap(s -> s.getCatalog().listTables(db.get()).stream())
             .filter(TiTableInfo::isView)
             .map(TiTableInfo::getName)
             .collect(Collectors.toList());
     }
 
     @Override
-    public CatalogBaseTable getTable(ObjectPath tablePath)
+    public CatalogBaseTable getTable(final ObjectPath tablePath)
         throws TableNotExistException, CatalogException {
-        Optional<CatalogTableImpl> res =
-            session
-                .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(tablePath.getDatabaseName())))
-                .flatMap(db -> db.getTables()
-                        .stream()
-                        .filter(t -> t.getName().equals(tablePath.getObjectName()))
-                        .findFirst())
-                .map(t -> new CatalogTableImpl(null, Collections.emptyMap(), ""));
+        final Map<String, String> tableOptions = ImmutableMap.of(
+            "connector", "tiflink",
+            TikvOptions.PDADDRESS.key(), conf.getPdAddrs().get(0).toString(),
+            TikvOptions.DATABASE.key(), tablePath.getDatabaseName(),
+            TikvOptions.TABLE.key(), tablePath.getObjectName()
+        );
+        Optional<CatalogTableImpl> res = session
+            .flatMap(s -> Optional.ofNullable(
+                s.getCatalog().getTable(tablePath.getDatabaseName(), tablePath.getObjectName())
+            ))
+            .map(t -> new CatalogTableImpl(getTableSchema(t), tableOptions, ""));
         if (res.isEmpty()) {
             throw new TableNotExistException("name", tablePath);
         }
@@ -161,7 +172,7 @@ public class TiFlinkCatalog implements Catalog {
     }
 
     @Override
-    public boolean tableExists(ObjectPath tablePath) throws CatalogException {
+    public boolean tableExists(final ObjectPath tablePath) throws CatalogException {
         return session
             .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(tablePath.getDatabaseName())))
             .flatMap(db -> db.getTables()

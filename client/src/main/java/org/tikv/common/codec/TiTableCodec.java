@@ -16,9 +16,11 @@
 package org.tikv.common.codec;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiTableInfo;
+import org.tikv.common.types.IntegerType;
 
 public class TiTableCodec {
 
@@ -46,10 +48,74 @@ public class TiTableCodec {
         return encoder.encode(columnInfoList, valueList);
     }
 
-    public static Object[] decodeRow(byte[] value, Long handle, TiTableInfo tableInfo) {
+    public static Object[] decodeKeyOnly(final Long handle, final TiTableInfo tableInfo) {
         if (handle == null && tableInfo.isPkHandle()) {
             throw new IllegalArgumentException("when pk is handle, handle cannot be null");
         }
+
+        final int colSize = tableInfo.getColumns().size();
+        Object[] res = new Object[colSize];
+
+        for (int i = 0; i < colSize; i++) {
+            final TiColumnInfo col = tableInfo.getColumn(i);
+            if (col.isPrimaryKey() && tableInfo.isPkHandle()) {
+                res[i] = handle;
+                return res;
+            }
+        }
+
+        throw new IllegalArgumentException("PK not found!");
+    }
+    public static Object[] decodeRow(byte[] value, Long handle, TiTableInfo tableInfo) {
+        if ((value[0] & 0xff) == org.tikv.common.codec.RowV2.CODEC_VER) {
+            return decodeRowV2(value, handle, tableInfo);
+        }
+        return decodeRowV1(value, handle, tableInfo);
+    }
+
+    public static Object[] decodeRowV1(byte[] value, Long handle, TiTableInfo tableInfo) {
+        if (handle == null && tableInfo.isPkHandle()) {
+            throw new IllegalArgumentException("when pk is handle, handle cannot be null");
+        }
+
+        int colSize = tableInfo.getColumns().size();
+        HashMap<Long, TiColumnInfo> idToColumn = new HashMap<>(colSize);
+        for (TiColumnInfo col : tableInfo.getColumns()) {
+            idToColumn.put(col.getId(), col);
+        }
+
+        // decode bytes to Map<ColumnID, Data>
+        HashMap<Long, Object> decodedDataMap = new HashMap<>(colSize);
+        CodecDataInput cdi = new CodecDataInput(value);
+        Object[] res = new Object[colSize];
+        while (!cdi.eof()) {
+            try {
+                long colID = (long)IntegerType.BIGINT.decode(cdi);
+                Object colValue = idToColumn.get(colID).getType().decodeForBatchWrite(cdi);
+                decodedDataMap.put(colID, colValue);
+            } catch (final Throwable e) {
+                continue;
+            }
+        }
+
+        // construct Row with Map<ColumnID, Data> & handle
+        for (int i = 0; i < colSize; i++) {
+            // skip pk is handle case
+            TiColumnInfo col = tableInfo.getColumn(i);
+            if (col.isPrimaryKey() && tableInfo.isPkHandle()) {
+                res[i] = handle;
+            } else {
+                res[i] = decodedDataMap.get(col.getId());
+            }
+        } 
+        return res;
+    }
+
+    public static Object[] decodeRowV2(byte[] value, Long handle, TiTableInfo tableInfo) {
+        if (handle == null && tableInfo.isPkHandle()) {
+            throw new IllegalArgumentException("when pk is handle, handle cannot be null");
+        }
+
         int colSize = tableInfo.getColumns().size();
         Object[] res = new Object[colSize];
 

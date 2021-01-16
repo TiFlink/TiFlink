@@ -1,12 +1,11 @@
 package org.tikv.cdc;
 
-import java.util.Map;
-import java.util.Set;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.tikv.common.region.TiRegion;
-import shade.com.google.common.base.Preconditions;
 
 public class RegionStateManager {
     private final long[] minSegTree;
@@ -19,7 +18,6 @@ public class RegionStateManager {
     }
 
     public RegionStateManager(final long[] regionIds) {
-        Preconditions.checkArgument(regionIds.length > 0, "regionIds can't be empty");
         int offset = 1;
         while (offset < regionIds.length) offset *= 2;
 
@@ -47,15 +45,15 @@ public class RegionStateManager {
         minSegTree[index] = resolvedTs;
 
         while (index > 0) {
-            index /= 2;
+            index = (index - 1) / 2;
             minSegTree[index] = Math.min(
-                index * 2, 
-                index * 2 + 1 < minSegTree.length ? minSegTree[index * 2 + 1] : Long.MAX_VALUE
+                minSegTree[index * 2 + 1], 
+                index * 2 + 2 < minSegTree.length ? minSegTree[index * 2 + 1] : Long.MAX_VALUE
             );
 
             maxSegTree[index] = Math.max(
-                index * 2, 
-                index * 2 + 1 < minSegTree.length ? minSegTree[index * 2 + 1] : Long.MIN_VALUE
+                maxSegTree[index * 2 + 1], 
+                index * 2 + 2 < maxSegTree.length ? maxSegTree[index * 2 + 1] : Long.MIN_VALUE
             );
         };
 

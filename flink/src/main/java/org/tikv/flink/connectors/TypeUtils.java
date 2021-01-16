@@ -1,7 +1,6 @@
 package org.tikv.flink.connectors;
 
 import static java.lang.String.format;
-
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -17,10 +16,17 @@ import org.apache.flink.table.data.StringData;
 import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.types.Row;
+import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.types.StringType;
 
 public class TypeUtils {
+    public static boolean isIndexKey(final byte[] key) {
+        return key[9] == '_' && key[10] == 'i';
+    }
 
+    public static boolean isRecordKey(final byte[] key) {
+        return key[9] == '_' && key[10] == 'r';
+    }
   /**
    * a default mapping: TiKV DataType -> Flink DataType
    *
@@ -153,7 +159,7 @@ public class TypeUtils {
       default:
         object = null;
     }
-    return Optional.ofNullable(object);
+    return Optional.of(object);
   }
 
   public static Optional<Object> getObjectWithDataType(Object object, DataType dataType) {
@@ -172,6 +178,18 @@ public class TypeUtils {
       rowData.setField(i, toRowDataType(row.getField(i)));
     }
     return Optional.of(rowData);
+  }
+
+  public static Object[] getObjectsWithDataTypes(final Object[] objects, final TiTableInfo tableInfo) {
+      for (int i = 0; i < objects.length; i++) {
+          if (objects[i] == null) continue;
+          objects[i] = toRowDataType(
+              getObjectWithDataType(
+                  objects[i],
+                  getFlinkType(tableInfo.getColumn(i).getType())).get()
+        );
+      }
+      return objects;
   }
 
   /**

@@ -1,9 +1,12 @@
 package org.tikv.flink.connectors;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
 import org.apache.flink.api.common.state.CheckpointListener;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
@@ -28,7 +31,7 @@ import org.tikv.common.region.TiRegion;
 import org.tikv.kvproto.Cdcpb.Event.Row;
 
 public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
-    implements CheckpointListener, CheckpointedFunction, CheckpointTrigger {
+    implements CheckpointListener, CheckpointedFunction, CheckpointTrigger, ResultTypeQueryable<RowData> {
     private static final long serialVersionUID = 8647392870748599256L;
 
     private Logger logger = LoggerFactory.getLogger(FlinkTikvConsumer.class);
@@ -36,6 +39,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     private final TiConfiguration conf;
     private final TiTableInfo tableInfo;
     private final List<TiRegion> regions;
+    private final TypeInformation<RowData> typeInfo; 
     private final long startTs;
 
     // Task local variables
@@ -50,10 +54,12 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
             final TiConfiguration conf,
             final TiTableInfo tableInfo,
             final List<TiRegion> regions,
+            final TypeInformation<RowData> typeInfo,
             final long startTs) {
         this.conf = conf;
         this.tableInfo = tableInfo;
         this.regions = regions;
+        this.typeInfo = typeInfo;
         this.startTs = startTs;
     }
 
@@ -71,7 +77,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
                     Math.min(idx * regionPerTask + regionPerTask, regions.size())
             );
         } else {
-            taskRegions.isEmpty();
+            taskRegions = Collections.emptyList();
         }
 
         final RegionCDCClientBuilder clientBuilder =
@@ -95,7 +101,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
         // main loop
         while (!client.isInitialized()) {
             handleRow(client.get());
-        }
+         }
 
         long resolvedTs = 0;
 
@@ -109,7 +115,13 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     }
 
     protected void handleRow(final Row row) {
+        logger.debug("handle row: {}", row);
         if (row == null) return;
+
+        if (!TypeUtils.isRecordKey(row.getKey().toByteArray())) {
+            // Don't handle index key for now
+            return;
+        }
 
         switch (row.getType()) {
             case COMMITTED:
@@ -130,10 +142,13 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     }
 
     protected void flushRows(final SourceContext<RowData> ctx, final long timestamp) {
+        logger.info("flush rows: {}", timestamp);
         while (!commits.isEmpty() && commits.firstKey().timestamp < timestamp) {
             final Row commitRow = commits.pollFirstEntry().getValue();
             final Row prewriteRow = prewrites.remove(RowKeyWithTs.ofStart(commitRow));
-            ctx.collectWithTimestamp(decodeToRowData(prewriteRow), timestamp);
+            final RowData rowData = decodeToRowData(prewriteRow);
+            logger.info("emit: {}, {}, {}", prewriteRow, commitRow, rowData);
+            ctx.collectWithTimestamp(rowData, timestamp);
         }
         ctx.emitWatermark(new Watermark(timestamp));
     }
@@ -173,11 +188,12 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
           case DELETE:
             return GenericRowData.ofKind(
                     RowKind.DELETE,
-                    TiTableCodec.decodeRow(row.getValue().toByteArray(), handle, tableInfo));
+                    TypeUtils.getObjectsWithDataTypes(TiTableCodec.decodeKeyOnly(handle, tableInfo), tableInfo));
           case PUT:
             return GenericRowData.ofKind(
                     RowKind.INSERT,
-                    TiTableCodec.decodeRow(row.getValue().toByteArray(), handle, tableInfo));
+                    TypeUtils.getObjectsWithDataTypes(
+                        TiTableCodec.decodeRow(row.getValue().toByteArray(), handle, tableInfo), tableInfo));
           default:
             throw new IllegalArgumentException("Unknown Row Op Type: " + row.getOpType().toString());
         }
@@ -238,5 +254,10 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
         static RowKeyWithTs ofCommit(final Row row) {
             return new RowKeyWithTs(row.getCommitTs(), row.getKey().toByteArray());
         }
+    }
+
+    @Override
+    public TypeInformation<RowData> getProducedType() {
+        return typeInfo;
     }
 }

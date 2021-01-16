@@ -1,6 +1,5 @@
 package org.tikv.cdc;
 
-import java.net.URI;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
@@ -16,7 +15,6 @@ import org.tikv.kvproto.ChangeDataGrpc;
 import org.tikv.kvproto.ChangeDataGrpc.ChangeDataStub;
 import org.tikv.kvproto.Metapb.Store;
 import shade.io.grpc.ManagedChannel;
-import shade.io.grpc.ManagedChannelBuilder;
 import shade.io.grpc.stub.StreamObserver;
 
 public class RegionCDCClient implements AutoCloseable {
@@ -46,7 +44,7 @@ public class RegionCDCClient implements AutoCloseable {
         logger.info("start streaming (region: {})", region.getId());
         final ChangeDataRequest request = ChangeDataRequest.newBuilder()
             .setRequestId(reqIdCounter.incrementAndGet())
-            .setHeader(Header.newBuilder().setTicdcVersion("4.0.0").build())
+            .setHeader(Header.newBuilder().setTicdcVersion("5.0.0").build())
             .setRegionId(region.getId())
             .setCheckpointTs(startTs)
             .setStartKey(region.getStartKey())

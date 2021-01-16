@@ -1,13 +1,14 @@
 package org.tikv.tiflink;
 
+import java.util.Arrays;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
-import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
-import org.tikv.flink.connectors.TikvDynamicSource;
+import org.tikv.flink.connectors.TiFlinkCatalog;
 import shade.com.google.common.base.Preconditions;
 
 public class TiFlinkExample {
@@ -26,10 +27,13 @@ public class TiFlinkExample {
             .build();
 
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
-        env.setParallelism(3);
+        env.setParallelism(1);
         
         final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
+        tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName));
 
-        final TikvDynamicSource source = new TikvDynamicSource();
+        tableEnv.useCatalog("tikv");
+        final Table authors = tableEnv.from("authors");
+        authors.execute().print();
     }    
 }

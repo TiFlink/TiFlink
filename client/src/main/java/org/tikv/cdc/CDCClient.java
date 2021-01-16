@@ -73,7 +73,8 @@ public class CDCClient implements AutoCloseable, StreamObserver<ChangeDataEvent>
                 continue;
             }
 
-            if (currentEvent != null && currentCDCEvent.hasResolvedTs()) {
+
+            if (currentCDCEvent != null) {
                 final ResolvedTs resolvedTs = currentCDCEvent.getResolvedTs();
                 final long ts = resolvedTs.getTs();
                 resolvedTs.getRegionsList().forEach(rid -> rsManager.updateTs(rid, ts));
