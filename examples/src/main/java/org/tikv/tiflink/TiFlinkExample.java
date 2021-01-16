@@ -38,6 +38,7 @@ public class TiFlinkExample {
 
         tableEnv.useCatalog("tikv");
 
+        /* see examples/src/main/resources/example.sql for table schema and data */
         tableEnv.sqlQuery(
                 "select id, first_name, last_name, email, "
                 + "(select count(*) from posts where author_id = authors.id) as posts from authors")
