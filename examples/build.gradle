@@ -9,9 +9,17 @@ plugins {
 dependencies {
     implementation project(':utils')
     implementation project(':client')
+
+    implementation 'log4j:log4j:1.2.17'
+    implementation 'org.slf4j:slf4j-api:1.7.30'
+    implementation 'org.slf4j:slf4j-log4j12:1.7.30'
+
+    implementation 'org.tikv:tikv-client-java:3.0.1'
+
+
 }
 
 application {
     // Define the main class for the application.
-    mainClass = 'org.tiflink.examples.DemoFlinkJob'
+    mainClass = 'org.tikv.tiflink.CDCClientExample'
 }

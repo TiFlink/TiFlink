@@ -10,6 +10,7 @@ dependencies {
     implementation project(':utils')
     implementation project(':client')
 
+    implementation 'org.tikv:tikv-client-java:3.0.1'
     implementation 'org.slf4j:slf4j-api:1.7.30'
 
     api 'org.apache.flink:flink-streaming-java_2.12:1.12.0'

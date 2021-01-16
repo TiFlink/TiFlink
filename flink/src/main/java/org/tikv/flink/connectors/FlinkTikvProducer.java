@@ -1,12 +1,23 @@
 package org.tikv.flink.connectors;
 
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.streaming.api.functions.sink.TwoPhaseCommitSinkFunction;
+import org.apache.flink.table.data.RowData;
 
-public class FlinkTikvProducer<T>
-    extends TwoPhaseCommitSinkFunction<T,
+public class FlinkTikvProducer
+    extends TwoPhaseCommitSinkFunction<RowData,
             FlinkTikvProducer.TikvTransactionState,
             FlinkTikvProducer.TikvTransactionContext> {
+
+  private static final long serialVersionUID = -3795270131952943711L;
     
+    public FlinkTikvProducer(TypeSerializer<TikvTransactionState> transactionSerializer,
+      TypeSerializer<TikvTransactionContext> contextSerializer) {
+    super(transactionSerializer, contextSerializer);
+    //TODO Auto-generated constructor stub
+  }
+
+
     public static class TikvTransactionState {
     }
 
@@ -14,7 +25,7 @@ public class FlinkTikvProducer<T>
     }
 
     @Override
-    protected void invoke(TikvTransactionState transaction, T value, Context context)
+    protected void invoke(TikvTransactionState transaction, RowData value, Context context)
         throws Exception {
       // TODO Auto-generated method stub
       
