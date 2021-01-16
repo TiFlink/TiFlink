@@ -18,8 +18,7 @@ public class TiFlinkExample {
         final String pdAddress = args[0];
 
         final String databaseName = "test";
-        final String tableName = "authors";
-        final String targetTableName = "authors_mv";
+        final String mvTable = "author_posts";
 
         final TiConfiguration conf = TiConfiguration.createDefault(pdAddress);
         final EnvironmentSettings settings = EnvironmentSettings.newInstance()
@@ -38,8 +37,10 @@ public class TiFlinkExample {
         tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName));
 
         tableEnv.useCatalog("tikv");
-        final Table authors = tableEnv.from(tableName);
 
-        authors.executeInsert(targetTableName);
+        tableEnv.sqlQuery(
+                "select id, first_name, last_name, email, "
+                + "(select count(*) from posts where author_id = authors.id) as posts from authors")
+            .executeInsert(mvTable);
     }    
 }
