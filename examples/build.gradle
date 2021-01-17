@@ -4,6 +4,8 @@
 
 plugins {
     id 'org.tiflink.java-application-conventions'
+
+    id 'org.springframework.boot' version '2.4.2'
 }
 
 dependencies {
@@ -13,7 +15,6 @@ dependencies {
     implementation 'log4j:log4j:1.2.17'
     implementation 'org.slf4j:slf4j-api:1.7.30'
     implementation 'org.slf4j:slf4j-log4j12:1.7.30'
-
     implementation 'org.tikv:tikv-client-java:4.0.0-SNAPSHOT'
 
     implementation 'org.apache.flink:flink-streaming-java_2.12:1.12.0'
@@ -21,9 +22,15 @@ dependencies {
     implementation 'org.apache.flink:flink-table-planner-blink_2.12:1.12.0'
     implementation 'org.apache.flink:flink-clients_2.12:1.12.0'
     implementation 'org.apache.flink:flink-runtime-web_2.12:1.12.0'
+
+    implementation 'com.alibaba:fastjson:1.2.73'
+    implementation('org.springframework.boot:spring-boot-starter-web:2.4.2'){
+        exclude group: 'ch.qos.logback', module: 'logback-classic'
+    }
+
 }
 
 application {
     // Define the main class for the application.
-    mainClass = 'org.tikv.tiflink.TiFlinkExample'
+    mainClass = 'org.tikv.tiflink.server.Application'
 }
