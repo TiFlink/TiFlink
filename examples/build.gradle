@@ -3,7 +3,14 @@
  */
 
 plugins {
-    id 'org.tiflink.java-application-conventions'
+    id 'org.springframework.boot' version '2.4.2'
+    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+    id 'java'
+}
+
+ext {
+    springBootVersion = '2.2.2.RELEASE'
+    ALI_REPOSITORY_URL = 'http://maven.aliyun.com/nexus/content/groups/public'
 }
 
 dependencies {
@@ -21,6 +28,8 @@ dependencies {
     implementation 'org.apache.flink:flink-table-planner-blink_2.12:1.12.0'
     implementation 'org.apache.flink:flink-clients_2.12:1.12.0'
     implementation 'org.apache.flink:flink-runtime-web_2.12:1.12.0'
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
 }
 
 application {

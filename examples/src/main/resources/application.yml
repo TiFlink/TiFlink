@@ -1,0 +1,9 @@
+server:
+  port: 9988
+tidb:
+  url: jdbc:mysql://localhost:4000/test
+  username: root
+  password:
+pd:
+  url: localhost:2379
+database: test
