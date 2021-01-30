@@ -12,18 +12,21 @@ import org.tikv.common.util.RangeSplitter.RegionTask;
 import org.tikv.kvproto.Coprocessor.KeyRange;
 
 public class RegionUtils {
-    public static List<TiRegion> getTableRegions(final TiSession session, final TiTableInfo tableInfo) {
-        return getTableRegions(session, tableInfo.getId());
-    }
+  public static List<TiRegion> getTableRegions(
+      final TiSession session, final TiTableInfo tableInfo) {
+    return getTableRegions(session, tableInfo.getId());
+  }
 
-    public static List<TiRegion> getTableRegions(final TiSession session, final long tableId) {
-        final KeyRange keyRange = KeyRange.newBuilder()
+  public static List<TiRegion> getTableRegions(final TiSession session, final long tableId) {
+    final KeyRange keyRange =
+        KeyRange.newBuilder()
             .setStart(RowKey.createMin(tableId).toByteString())
             .setEnd(RowKey.createBeyondMax(tableId).toByteString())
             .build();
 
-        final RangeSplitter splitter = RangeSplitter.newSplitter(session.getRegionManager());
-        return splitter.splitRangeByRegion(Arrays.asList(keyRange))
-            .stream().map(RegionTask::getRegion).collect(Collectors.toList());
-    }
+    final RangeSplitter splitter = RangeSplitter.newSplitter(session.getRegionManager());
+    return splitter.splitRangeByRegion(Arrays.asList(keyRange)).stream()
+        .map(RegionTask::getRegion)
+        .collect(Collectors.toList());
+  }
 }

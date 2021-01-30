@@ -40,316 +40,350 @@ import shade.com.google.common.collect.ImmutableMap;
 
 public class TiFlinkCatalog implements Catalog {
 
-    private final TiConfiguration conf;
-    private final String name;
-    private final String defaultDatabase;
+  private final TiConfiguration conf;
+  private final String name;
+  private final String defaultDatabase;
 
-    private Optional<TiSession> session = Optional.empty();
+  private Optional<TiSession> session = Optional.empty();
 
-    public TiFlinkCatalog(final TiConfiguration conf, final String name, final String defaultDatabase) {
-        this.conf = conf;
-        this.name = name;
-        this.defaultDatabase = defaultDatabase;
+  public TiFlinkCatalog(
+      final TiConfiguration conf, final String name, final String defaultDatabase) {
+    this.conf = conf;
+    this.name = name;
+    this.defaultDatabase = defaultDatabase;
+  }
+
+  public TiFlinkCatalog(final TiConfiguration conf) {
+    this(conf, "tiflink", "default");
+  }
+
+  @Override
+  public void open() throws CatalogException {
+    session = Optional.ofNullable(TiSession.create(conf));
+  }
+
+  @Override
+  public void close() throws CatalogException {
+    try {
+      if (session.isPresent()) {
+        session.get().close();
+      }
+    } catch (final Exception e) {
+      throw new CatalogException(e);
+    }
+  }
+
+  @Override
+  public String getDefaultDatabase() throws CatalogException {
+    return defaultDatabase;
+  }
+
+  @Override
+  public List<String> listDatabases() throws CatalogException {
+    return session.stream()
+        .flatMap(s -> s.getCatalog().listDatabases().stream())
+        .map(TiDBInfo::getName)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public CatalogDatabase getDatabase(String databaseName)
+      throws DatabaseNotExistException, CatalogException {
+    Optional<CatalogDatabase> res =
+        session
+            .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)))
+            .map(db -> new CatalogDatabaseImpl(Collections.emptyMap(), ""));
+
+    if (res.isEmpty()) {
+      throw new DatabaseNotExistException(name, databaseName);
     }
 
-    public TiFlinkCatalog(final TiConfiguration conf) {
-        this(conf, "tiflink", "default");
+    return res.get();
+  }
+
+  @Override
+  public boolean databaseExists(String databaseName) throws CatalogException {
+    return session
+        .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)))
+        .isPresent();
+  }
+
+  @Override
+  public void createDatabase(String name, CatalogDatabase database, boolean ignoreIfExists)
+      throws DatabaseAlreadyExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void dropDatabase(String name, boolean ignoreIfNotExists, boolean cascade)
+      throws DatabaseNotExistException, DatabaseNotEmptyException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void alterDatabase(String name, CatalogDatabase newDatabase, boolean ignoreIfNotExists)
+      throws DatabaseNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public List<String> listTables(final String databaseName)
+      throws DatabaseNotExistException, CatalogException {
+    final Optional<TiDBInfo> db =
+        session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)));
+    if (db.isEmpty()) {
+      throw new DatabaseNotExistException(name, databaseName);
     }
 
-    @Override
-    public void open() throws CatalogException {
-        session = Optional.ofNullable(TiSession.create(conf));
+    return session.stream()
+        .flatMap(s -> s.getCatalog().listTables(db.get()).stream())
+        .filter(Predicate.not(TiTableInfo::isView))
+        .map(TiTableInfo::getName)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public List<String> listViews(final String databaseName)
+      throws DatabaseNotExistException, CatalogException {
+    final Optional<TiDBInfo> db =
+        session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)));
+    if (db.isEmpty()) {
+      throw new DatabaseNotExistException(name, databaseName);
     }
 
-    @Override
-    public void close() throws CatalogException {
-        try {
-            if (session.isPresent()) {
-                session.get().close();
-            }
-        } catch(final Exception e){
-            throw new CatalogException(e);
-        }
-    }
+    return session.stream()
+        .flatMap(s -> s.getCatalog().listTables(db.get()).stream())
+        .filter(TiTableInfo::isView)
+        .map(TiTableInfo::getName)
+        .collect(Collectors.toList());
+  }
 
-    @Override
-    public String getDefaultDatabase() throws CatalogException {
-        return defaultDatabase;
-    }
-
-    @Override
-    public List<String> listDatabases() throws CatalogException {
-        return session.stream()
-            .flatMap(s -> s.getCatalog().listDatabases().stream())
-            .map(TiDBInfo::getName).collect(Collectors.toList());
-    }
-
-    @Override
-    public CatalogDatabase getDatabase(String databaseName)
-        throws DatabaseNotExistException, CatalogException {
-        Optional<CatalogDatabase> res = 
-            session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)))
-                .map(db -> new CatalogDatabaseImpl(Collections.emptyMap(), ""));
-
-        if (res.isEmpty()) {
-            throw new DatabaseNotExistException(name, databaseName);
-        }
-
-        return res.get();
-    }
-
-    @Override
-    public boolean databaseExists(String databaseName) throws CatalogException {
-        return session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName))).isPresent();
-    }
-
-    @Override
-    public void createDatabase(String name, CatalogDatabase database, boolean ignoreIfExists)
-        throws DatabaseAlreadyExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void dropDatabase(String name, boolean ignoreIfNotExists, boolean cascade)
-        throws DatabaseNotExistException, DatabaseNotEmptyException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void alterDatabase(String name, CatalogDatabase newDatabase, boolean ignoreIfNotExists)
-        throws DatabaseNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public List<String> listTables(final String databaseName)
-        throws DatabaseNotExistException, CatalogException {
-        final Optional<TiDBInfo> db = 
-            session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)));
-        if (db.isEmpty()) {
-            throw new DatabaseNotExistException(name, databaseName);
-        }
-
-        return session.stream().flatMap(s -> s.getCatalog().listTables(db.get()).stream())
-            .filter(Predicate.not(TiTableInfo::isView))
-            .map(TiTableInfo::getName)
-            .collect(Collectors.toList());
-    }
-
-    @Override
-    public List<String> listViews(final String databaseName)
-        throws DatabaseNotExistException, CatalogException {
-        final Optional<TiDBInfo> db = 
-            session.flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(databaseName)));
-        if (db.isEmpty()) {
-            throw new DatabaseNotExistException(name, databaseName);
-        }
-
-        return session.stream().flatMap(s -> s.getCatalog().listTables(db.get()).stream())
-            .filter(TiTableInfo::isView)
-            .map(TiTableInfo::getName)
-            .collect(Collectors.toList());
-    }
-
-    @Override
-    public CatalogBaseTable getTable(final ObjectPath tablePath)
-        throws TableNotExistException, CatalogException {
-        final Map<String, String> tableOptions = ImmutableMap.of(
-            "connector", "tiflink",
-            TikvOptions.PDADDRESS.key(), conf.getPdAddrs().get(0).toString(),
-            TikvOptions.DATABASE.key(), tablePath.getDatabaseName(),
-            TikvOptions.TABLE.key(), tablePath.getObjectName()
-        );
-        Optional<CatalogTableImpl> res = session
-            .flatMap(s -> Optional.ofNullable(
-                s.getCatalog().getTable(tablePath.getDatabaseName(), tablePath.getObjectName())
-            ))
+  @Override
+  public CatalogBaseTable getTable(final ObjectPath tablePath)
+      throws TableNotExistException, CatalogException {
+    final Map<String, String> tableOptions =
+        ImmutableMap.of(
+            "connector",
+            "tiflink",
+            TikvOptions.PDADDRESS.key(),
+            conf.getPdAddrs().get(0).toString(),
+            TikvOptions.DATABASE.key(),
+            tablePath.getDatabaseName(),
+            TikvOptions.TABLE.key(),
+            tablePath.getObjectName());
+    Optional<CatalogTableImpl> res =
+        session
+            .flatMap(
+                s ->
+                    Optional.ofNullable(
+                        s.getCatalog()
+                            .getTable(tablePath.getDatabaseName(), tablePath.getObjectName())))
             .map(t -> new CatalogTableImpl(getTableSchema(t), tableOptions, ""));
-        if (res.isEmpty()) {
-            throw new TableNotExistException("name", tablePath);
-        }
-        return res.get();
+    if (res.isEmpty()) {
+      throw new TableNotExistException("name", tablePath);
     }
+    return res.get();
+  }
 
-    @Override
-    public boolean tableExists(final ObjectPath tablePath) throws CatalogException {
-        return session
-            .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(tablePath.getDatabaseName())))
-            .flatMap(db -> db.getTables()
-                    .stream()
+  @Override
+  public boolean tableExists(final ObjectPath tablePath) throws CatalogException {
+    return session
+        .flatMap(s -> Optional.ofNullable(s.getCatalog().getDatabase(tablePath.getDatabaseName())))
+        .flatMap(
+            db ->
+                db.getTables().stream()
                     .filter(t -> t.getName().equals(tablePath.getObjectName()))
                     .findFirst())
-            .isPresent();
-    }
+        .isPresent();
+  }
 
-    @Override
-    public void dropTable(ObjectPath tablePath, boolean ignoreIfNotExists)
-        throws TableNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void dropTable(ObjectPath tablePath, boolean ignoreIfNotExists)
+      throws TableNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void renameTable(ObjectPath tablePath, String newTableName, boolean ignoreIfNotExists)
-        throws TableNotExistException, TableAlreadyExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void renameTable(ObjectPath tablePath, String newTableName, boolean ignoreIfNotExists)
+      throws TableNotExistException, TableAlreadyExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void createTable(ObjectPath tablePath, CatalogBaseTable table, boolean ignoreIfExists)
-        throws TableAlreadyExistException, DatabaseNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void createTable(ObjectPath tablePath, CatalogBaseTable table, boolean ignoreIfExists)
+      throws TableAlreadyExistException, DatabaseNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void alterTable(ObjectPath tablePath, CatalogBaseTable newTable, boolean ignoreIfNotExists)
-        throws TableNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterTable(ObjectPath tablePath, CatalogBaseTable newTable, boolean ignoreIfNotExists)
+      throws TableNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public List<CatalogPartitionSpec> listPartitions(ObjectPath tablePath)
-        throws TableNotExistException, TableNotPartitionedException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public List<CatalogPartitionSpec> listPartitions(ObjectPath tablePath)
+      throws TableNotExistException, TableNotPartitionedException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public List<CatalogPartitionSpec> listPartitions(ObjectPath tablePath,
-            CatalogPartitionSpec partitionSpec) throws TableNotExistException,
-           TableNotPartitionedException, PartitionSpecInvalidException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public List<CatalogPartitionSpec> listPartitions(
+      ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+      throws TableNotExistException, TableNotPartitionedException, PartitionSpecInvalidException,
+          CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public List<CatalogPartitionSpec> listPartitionsByFilter(ObjectPath tablePath,
-            List<Expression> filters)
-        throws TableNotExistException, TableNotPartitionedException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public List<CatalogPartitionSpec> listPartitionsByFilter(
+      ObjectPath tablePath, List<Expression> filters)
+      throws TableNotExistException, TableNotPartitionedException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public CatalogPartition getPartition(ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
-        throws PartitionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public CatalogPartition getPartition(ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+      throws PartitionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public boolean partitionExists(ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
-        throws CatalogException {
-        return false;
-    }
+  @Override
+  public boolean partitionExists(ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+      throws CatalogException {
+    return false;
+  }
 
-    @Override
-    public void createPartition(ObjectPath tablePath, CatalogPartitionSpec partitionSpec,
-            CatalogPartition partition, boolean ignoreIfExists)
-        throws TableNotExistException, TableNotPartitionedException, PartitionSpecInvalidException,
-                          PartitionAlreadyExistsException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void createPartition(
+      ObjectPath tablePath,
+      CatalogPartitionSpec partitionSpec,
+      CatalogPartition partition,
+      boolean ignoreIfExists)
+      throws TableNotExistException, TableNotPartitionedException, PartitionSpecInvalidException,
+          PartitionAlreadyExistsException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void dropPartition(ObjectPath tablePath, CatalogPartitionSpec partitionSpec,
-            boolean ignoreIfNotExists) throws PartitionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void dropPartition(
+      ObjectPath tablePath, CatalogPartitionSpec partitionSpec, boolean ignoreIfNotExists)
+      throws PartitionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void alterPartition(ObjectPath tablePath, CatalogPartitionSpec partitionSpec,
-            CatalogPartition newPartition, boolean ignoreIfNotExists)
-        throws PartitionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterPartition(
+      ObjectPath tablePath,
+      CatalogPartitionSpec partitionSpec,
+      CatalogPartition newPartition,
+      boolean ignoreIfNotExists)
+      throws PartitionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public List<String> listFunctions(final String dbName)
-        throws DatabaseNotExistException, CatalogException {
-        return Collections.emptyList();
-    }
+  @Override
+  public List<String> listFunctions(final String dbName)
+      throws DatabaseNotExistException, CatalogException {
+    return Collections.emptyList();
+  }
 
-    @Override
-    public CatalogFunction getFunction(ObjectPath functionPath)
-        throws FunctionNotExistException, CatalogException {
-        throw new FunctionNotExistException(name, functionPath);
-    }
+  @Override
+  public CatalogFunction getFunction(ObjectPath functionPath)
+      throws FunctionNotExistException, CatalogException {
+    throw new FunctionNotExistException(name, functionPath);
+  }
 
-    @Override
-    public boolean functionExists(ObjectPath functionPath) throws CatalogException {
-        return false;
-    }
+  @Override
+  public boolean functionExists(ObjectPath functionPath) throws CatalogException {
+    return false;
+  }
 
-    @Override
-    public void createFunction(ObjectPath functionPath, CatalogFunction function,
-            boolean ignoreIfExists)
-        throws FunctionAlreadyExistException, DatabaseNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void createFunction(
+      ObjectPath functionPath, CatalogFunction function, boolean ignoreIfExists)
+      throws FunctionAlreadyExistException, DatabaseNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void alterFunction(ObjectPath functionPath, CatalogFunction newFunction,
-            boolean ignoreIfNotExists) throws FunctionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterFunction(
+      ObjectPath functionPath, CatalogFunction newFunction, boolean ignoreIfNotExists)
+      throws FunctionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void dropFunction(ObjectPath functionPath, boolean ignoreIfNotExists)
-        throws FunctionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void dropFunction(ObjectPath functionPath, boolean ignoreIfNotExists)
+      throws FunctionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public CatalogTableStatistics getTableStatistics(final ObjectPath tablePath)
-        throws TableNotExistException, CatalogException {
-        return null;
-    }
+  @Override
+  public CatalogTableStatistics getTableStatistics(final ObjectPath tablePath)
+      throws TableNotExistException, CatalogException {
+    return null;
+  }
 
-    @Override
-    public CatalogColumnStatistics getTableColumnStatistics(final ObjectPath tablePath)
-        throws TableNotExistException, CatalogException {
-        return null;
-    }
+  @Override
+  public CatalogColumnStatistics getTableColumnStatistics(final ObjectPath tablePath)
+      throws TableNotExistException, CatalogException {
+    return null;
+  }
 
-    @Override
-    public CatalogTableStatistics getPartitionStatistics(ObjectPath tablePath,
-            CatalogPartitionSpec partitionSpec) throws PartitionNotExistException, CatalogException {
-        return null;
-    }
+  @Override
+  public CatalogTableStatistics getPartitionStatistics(
+      ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+      throws PartitionNotExistException, CatalogException {
+    return null;
+  }
 
-    @Override
-    public CatalogColumnStatistics getPartitionColumnStatistics(ObjectPath tablePath,
-            CatalogPartitionSpec partitionSpec) throws PartitionNotExistException, CatalogException {
-        return null;
-    }
+  @Override
+  public CatalogColumnStatistics getPartitionColumnStatistics(
+      ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+      throws PartitionNotExistException, CatalogException {
+    return null;
+  }
 
-    @Override
-    public void alterTableStatistics(ObjectPath tablePath, CatalogTableStatistics tableStatistics,
-            boolean ignoreIfNotExists) throws TableNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterTableStatistics(
+      ObjectPath tablePath, CatalogTableStatistics tableStatistics, boolean ignoreIfNotExists)
+      throws TableNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void alterTableColumnStatistics(ObjectPath tablePath,
-            CatalogColumnStatistics columnStatistics, boolean ignoreIfNotExists)
-        throws TableNotExistException, CatalogException, TablePartitionedException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterTableColumnStatistics(
+      ObjectPath tablePath, CatalogColumnStatistics columnStatistics, boolean ignoreIfNotExists)
+      throws TableNotExistException, CatalogException, TablePartitionedException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void alterPartitionStatistics(ObjectPath tablePath, CatalogPartitionSpec partitionSpec,
-            CatalogTableStatistics partitionStatistics, boolean ignoreIfNotExists)
-        throws PartitionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterPartitionStatistics(
+      ObjectPath tablePath,
+      CatalogPartitionSpec partitionSpec,
+      CatalogTableStatistics partitionStatistics,
+      boolean ignoreIfNotExists)
+      throws PartitionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    @Override
-    public void alterPartitionColumnStatistics(ObjectPath tablePath,
-            CatalogPartitionSpec partitionSpec, CatalogColumnStatistics columnStatistics,
-            boolean ignoreIfNotExists) throws PartitionNotExistException, CatalogException {
-        throw new UnsupportedOperationException();
-    }
+  @Override
+  public void alterPartitionColumnStatistics(
+      ObjectPath tablePath,
+      CatalogPartitionSpec partitionSpec,
+      CatalogColumnStatistics columnStatistics,
+      boolean ignoreIfNotExists)
+      throws PartitionNotExistException, CatalogException {
+    throw new UnsupportedOperationException();
+  }
 
-    public TableSchema getTableSchema(final TiTableInfo tableInfo) {
-        final TableSchema.Builder builder = TableSchema.builder();
-        tableInfo.getColumns().forEach(col -> builder.field(col.getName(), TypeUtils.getFlinkType(col.getType())));
-        return builder.build();
-    }
-
+  public TableSchema getTableSchema(final TiTableInfo tableInfo) {
+    final TableSchema.Builder builder = TableSchema.builder();
+    tableInfo
+        .getColumns()
+        .forEach(col -> builder.field(col.getName(), TypeUtils.getFlinkType(col.getType())));
+    return builder.build();
+  }
 }

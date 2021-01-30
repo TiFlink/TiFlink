@@ -18,31 +18,31 @@ import shade.io.grpc.ManagedChannel;
 import shade.io.grpc.stub.StreamObserver;
 
 public class RegionCDCClient implements AutoCloseable {
-    private static final AtomicLong reqIdCounter = new AtomicLong(0);
-    private final Logger logger = LoggerFactory.getLogger(RegionCDCClient.class);
+  private static final AtomicLong reqIdCounter = new AtomicLong(0);
+  private final Logger logger = LoggerFactory.getLogger(RegionCDCClient.class);
 
-    private final long startTs;
-    private final TiRegion region;
-    private final ManagedChannel channel;
-    private final ChangeDataStub asyncStub;
-    private final StreamObserver<ChangeDataEvent> observer;
+  private final long startTs;
+  private final TiRegion region;
+  private final ManagedChannel channel;
+  private final ChangeDataStub asyncStub;
+  private final StreamObserver<ChangeDataEvent> observer;
 
-    private RegionCDCClient(
-            final long startTs,
-            final TiRegion region,
-            final StreamObserver<ChangeDataEvent> observer,
-            final ManagedChannel channel
-    ) {
-        this.startTs = startTs;
-        this.region = region;
-        this.observer = observer;
-        this.channel = channel;
-        this.asyncStub = ChangeDataGrpc.newStub(channel);
-    }
+  private RegionCDCClient(
+      final long startTs,
+      final TiRegion region,
+      final StreamObserver<ChangeDataEvent> observer,
+      final ManagedChannel channel) {
+    this.startTs = startTs;
+    this.region = region;
+    this.observer = observer;
+    this.channel = channel;
+    this.asyncStub = ChangeDataGrpc.newStub(channel);
+  }
 
-    public void start() {
-        logger.info("start streaming (region: {})", region.getId());
-        final ChangeDataRequest request = ChangeDataRequest.newBuilder()
+  public void start() {
+    logger.info("start streaming (region: {})", region.getId());
+    final ChangeDataRequest request =
+        ChangeDataRequest.newBuilder()
             .setRequestId(reqIdCounter.incrementAndGet())
             .setHeader(Header.newBuilder().setTicdcVersion("5.0.0").build())
             .setRegionId(region.getId())
@@ -51,43 +51,47 @@ public class RegionCDCClient implements AutoCloseable {
             .setEndKey(region.getEndKey())
             .setRegionEpoch(region.getRegionEpoch())
             .build();
-        final StreamObserver<ChangeDataRequest> requestObserver = asyncStub.eventFeed(observer);
-        requestObserver.onNext(request);
+    final StreamObserver<ChangeDataRequest> requestObserver = asyncStub.eventFeed(observer);
+    requestObserver.onNext(request);
+  }
+
+  public TiRegion getRegion() {
+    return region;
+  }
+
+  @Override
+  public void close() throws Exception {
+    channel.shutdown();
+    try {
+      logger.debug("awaitTermination (region: {})", region.getId());
+      channel.awaitTermination(60, TimeUnit.SECONDS);
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } finally {
+      channel.shutdownNow();
+    }
+    logger.info("terminated (region: {})", region.getId());
+  }
+
+  public static class RegionCDCClientBuilder {
+    final TiConfiguration conf;
+    final RegionManager regionManager;
+    final ChannelFactory channelFactory;
+
+    public RegionCDCClientBuilder(
+        final TiConfiguration conf,
+        final RegionManager regionManager,
+        final ChannelFactory channelFactory) {
+      this.conf = conf;
+      this.regionManager = regionManager;
+      this.channelFactory = channelFactory;
     }
 
-    public TiRegion getRegion() {
-        return region;
+    public RegionCDCClient build(
+        final long startTs, final TiRegion region, final StreamObserver<ChangeDataEvent> observer) {
+      final Store store = regionManager.getStoreById(region.getLeader().getStoreId());
+      return new RegionCDCClient(
+          startTs, region, observer, channelFactory.getChannel(store.getAddress()));
     }
-
-    @Override
-    public void close() throws Exception {
-        channel.shutdown();
-        try {
-            logger.debug("awaitTermination (region: {})", region.getId());
-            channel.awaitTermination(60, TimeUnit.SECONDS);
-        } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            channel.shutdownNow();
-        }
-        logger.info("terminated (region: {})", region.getId());
-    }
-
-    static public class RegionCDCClientBuilder {
-        final TiConfiguration conf;
-        final RegionManager regionManager;
-        final ChannelFactory channelFactory;
-
-        public RegionCDCClientBuilder(
-                final TiConfiguration conf, final RegionManager regionManager, final ChannelFactory channelFactory) {
-            this.conf = conf;
-            this.regionManager = regionManager;
-            this.channelFactory = channelFactory;
-        }
-
-        public RegionCDCClient build(final long startTs, final TiRegion region, final StreamObserver<ChangeDataEvent> observer) {
-            final Store store = regionManager.getStoreById(region.getLeader().getStoreId());
-            return new RegionCDCClient(startTs, region, observer, channelFactory.getChannel(store.getAddress()));
-        }
-    }
+  }
 }

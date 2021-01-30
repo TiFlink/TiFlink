@@ -33,254 +33,255 @@ import org.tikv.kvproto.Kvrpcpb.KvPair;
 import org.tikv.txn.KVClient;
 
 public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
-    implements CheckpointListener, CheckpointedFunction, CheckpointTrigger, ResultTypeQueryable<RowData> {
-    private static final long serialVersionUID = 8647392870748599256L;
+    implements CheckpointListener,
+        CheckpointedFunction,
+        CheckpointTrigger,
+        ResultTypeQueryable<RowData> {
+  private static final long serialVersionUID = 8647392870748599256L;
 
-    private Logger logger = LoggerFactory.getLogger(FlinkTikvConsumer.class);
+  private Logger logger = LoggerFactory.getLogger(FlinkTikvConsumer.class);
 
-    private final TiConfiguration conf;
-    private final TiTableInfo tableInfo;
-    private final List<TiRegion> regions;
-    private final TypeInformation<RowData> typeInfo; 
-    private final long startTs;
+  private final TiConfiguration conf;
+  private final TiTableInfo tableInfo;
+  private final List<TiRegion> regions;
+  private final TypeInformation<RowData> typeInfo;
+  private final long startTs;
 
-    // Task local variables
-    private List<TiRegion> taskRegions;
-    private TiSession session = null;
-    private CDCClient client = null;
+  // Task local variables
+  private List<TiRegion> taskRegions;
+  private TiSession session = null;
+  private CDCClient client = null;
 
-    private TreeMap<RowKeyWithTs, Row> prewrites = null;
-    private TreeMap<RowKeyWithTs, Row> commits = null;
+  private TreeMap<RowKeyWithTs, Row> prewrites = null;
+  private TreeMap<RowKeyWithTs, Row> commits = null;
 
-    public FlinkTikvConsumer(
-            final TiConfiguration conf,
-            final TiTableInfo tableInfo,
-            final List<TiRegion> regions,
-            final TypeInformation<RowData> typeInfo,
-            final long startTs) {
-        this.conf = conf;
-        this.tableInfo = tableInfo;
-        this.regions = regions;
-        this.typeInfo = typeInfo;
-        this.startTs = startTs;
+  public FlinkTikvConsumer(
+      final TiConfiguration conf,
+      final TiTableInfo tableInfo,
+      final List<TiRegion> regions,
+      final TypeInformation<RowData> typeInfo,
+      final long startTs) {
+    this.conf = conf;
+    this.tableInfo = tableInfo;
+    this.regions = regions;
+    this.typeInfo = typeInfo;
+    this.startTs = startTs;
+  }
+
+  @Override
+  public void open(final Configuration config) throws Exception {
+    super.open(config);
+    session = TiSession.create(conf);
+
+    final int numOfTasks = this.getRuntimeContext().getNumberOfParallelSubtasks();
+    final int idx = this.getRuntimeContext().getIndexOfThisSubtask();
+
+    final int regionPerTask =
+        (regions.size() / numOfTasks) + ((regions.size() % numOfTasks) > 0 ? 1 : 0);
+    if (idx * regionPerTask < regions.size()) {
+      taskRegions =
+          regions.subList(
+              idx * regionPerTask, Math.min(idx * regionPerTask + regionPerTask, regions.size()));
+    } else {
+      taskRegions = Collections.emptyList();
     }
 
-    @Override
-    public void open(final Configuration config) throws Exception {
-        super.open(config);
-        session = TiSession.create(conf);
+    final RegionCDCClientBuilder clientBuilder =
+        new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
+    client = new CDCClient(conf, clientBuilder, taskRegions, startTs);
 
-        final int numOfTasks = this.getRuntimeContext().getNumberOfParallelSubtasks();
-        final int idx = this.getRuntimeContext().getIndexOfThisSubtask();
+    prewrites = new TreeMap<>();
+    commits = new TreeMap<>();
+  }
 
-        final int regionPerTask = (regions.size() / numOfTasks) + ((regions.size() % numOfTasks) > 0 ? 1 : 0);
-        if (idx * regionPerTask < regions.size()) {
-            taskRegions = regions.subList(
-                    idx * regionPerTask,
-                    Math.min(idx * regionPerTask + regionPerTask, regions.size())
-            );
-        } else {
-            taskRegions = Collections.emptyList();
+  @Override
+  public void run(final SourceContext<RowData> ctx) throws Exception {
+    if (taskRegions.isEmpty()) {
+      logger.info("No regions to watch, enter idle state");
+      ctx.markAsTemporarilyIdle();
+    }
+    // scan original table first
+
+    final KVClient scanClient = session.createKVClient();
+    for (final TiRegion region : taskRegions) {
+      for (final KvPair pair : scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
+        if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
+          ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
         }
-
-        final RegionCDCClientBuilder clientBuilder =
-            new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
-        client = new CDCClient(conf, clientBuilder, taskRegions, startTs);
-
-        prewrites = new TreeMap<>();
-        commits = new TreeMap<>();
+      }
     }
 
+    long resolvedTs = startTs;
+    ctx.emitWatermark(new Watermark(resolvedTs));
 
-    @Override
-    public void run(final SourceContext<RowData> ctx) throws Exception {
-        if (taskRegions.isEmpty()) {
-            logger.info("No regions to watch, enter idle state");
-            ctx.markAsTemporarilyIdle();
-        }
-        // scan original table first
+    // start consuming CDC
+    client.start();
 
-
-        final KVClient scanClient = session.createKVClient();
-        for (final TiRegion region : taskRegions) {
-            for (final KvPair pair : scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
-                if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
-                    ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
-                }
-            }
-        }
-
-        long resolvedTs = startTs;
-        ctx.emitWatermark(new Watermark(resolvedTs));
-        
-        // start consuming CDC
-        client.start();
-
-        // main loop
-        while (!client.isInitialized()) {
-            handleRow(client.get());
-         }
-
-
-        while (true) {
-            handleRow(client.get());
-            if (client.getMinResolvedTs() > resolvedTs) {
-                resolvedTs = client.getMinResolvedTs();
-                flushRows(ctx, resolvedTs);
-            }
-        }
+    // main loop
+    while (!client.isInitialized()) {
+      handleRow(client.get());
     }
 
-    protected void handleRow(final Row row) {
-        logger.debug("handle row: {}", row);
-        if (row == null) return;
+    while (true) {
+      handleRow(client.get());
+      if (client.getMinResolvedTs() > resolvedTs) {
+        resolvedTs = client.getMinResolvedTs();
+        flushRows(ctx, resolvedTs);
+      }
+    }
+  }
 
-        if (!TypeUtils.isRecordKey(row.getKey().toByteArray())) {
-            // Don't handle index key for now
-            return;
-        }
+  protected void handleRow(final Row row) {
+    logger.debug("handle row: {}", row);
+    if (row == null) return;
 
-        switch (row.getType()) {
-            case COMMITTED:
-                prewrites.put(RowKeyWithTs.ofStart(row), row);
-                // fallthrough
-            case COMMIT:
-                commits.put(RowKeyWithTs.ofCommit(row), row);
-                break;
-            case PREWRITE:
-                prewrites.put(RowKeyWithTs.ofStart(row), row);
-                break;
-            case ROLLBACK:
-                prewrites.remove(RowKeyWithTs.ofStart(row));
-                break;
-            default:
-                logger.warn("Unsupported row type:" + row.getType());
-        }
+    if (!TypeUtils.isRecordKey(row.getKey().toByteArray())) {
+      // Don't handle index key for now
+      return;
     }
 
-    protected void flushRows(final SourceContext<RowData> ctx, final long timestamp) {
-        logger.info("flush rows: {}", timestamp);
-        while (!commits.isEmpty() && commits.firstKey().timestamp < timestamp) {
-            final Row commitRow = commits.pollFirstEntry().getValue();
-            final Row prewriteRow = prewrites.remove(RowKeyWithTs.ofStart(commitRow));
-            final RowData rowData = decodeToRowData(prewriteRow);
-            ctx.collectWithTimestamp(rowData, timestamp);
-        }
-        ctx.emitWatermark(new Watermark(timestamp));
+    switch (row.getType()) {
+      case COMMITTED:
+        prewrites.put(RowKeyWithTs.ofStart(row), row);
+        // fallthrough
+      case COMMIT:
+        commits.put(RowKeyWithTs.ofCommit(row), row);
+        break;
+      case PREWRITE:
+        prewrites.put(RowKeyWithTs.ofStart(row), row);
+        break;
+      case ROLLBACK:
+        prewrites.remove(RowKeyWithTs.ofStart(row));
+        break;
+      default:
+        logger.warn("Unsupported row type:" + row.getType());
     }
+  }
 
-
-    @Override
-    public void cancel() {
-        // TODO Auto-generated method stub
-
+  protected void flushRows(final SourceContext<RowData> ctx, final long timestamp) {
+    logger.info("flush rows: {}", timestamp);
+    while (!commits.isEmpty() && commits.firstKey().timestamp < timestamp) {
+      final Row commitRow = commits.pollFirstEntry().getValue();
+      final Row prewriteRow = prewrites.remove(RowKeyWithTs.ofStart(commitRow));
+      final RowData rowData = decodeToRowData(prewriteRow);
+      ctx.collectWithTimestamp(rowData, timestamp);
     }
+    ctx.emitWatermark(new Watermark(timestamp));
+  }
 
-    @Override
-    public void triggerCheckpoint(final long checkpointId) throws FlinkException {
-        logger.info("triggered checkpoint: {}", checkpointId);
-    }
+  @Override
+  public void cancel() {
+    // TODO Auto-generated method stub
 
-    @Override
-    public void snapshotState(final FunctionSnapshotContext context) throws Exception {
-        logger.info("snapshotState checkpoint: {}", context.getCheckpointId());
-    }
+  }
 
-    @Override
-    public void initializeState(final FunctionInitializationContext context) throws Exception {
-        logger.info("initialize checkpoint");
-    }
+  @Override
+  public void triggerCheckpoint(final long checkpointId) throws FlinkException {
+    logger.info("triggered checkpoint: {}", checkpointId);
+  }
 
-    @Override
-    public void notifyCheckpointComplete(long checkpointId) throws Exception {
-        logger.info("checkpoint completed: {}", checkpointId);
-    }
+  @Override
+  public void snapshotState(final FunctionSnapshotContext context) throws Exception {
+    logger.info("snapshotState checkpoint: {}", context.getCheckpointId());
+  }
 
-    protected RowData decodeToRowData(final Row row) {
-        final RowKey rowKey = RowKey.decode(row.getKey().toByteArray());
-        final long handle = rowKey.getHandle();
-        switch (row.getOpType()) {
-          case DELETE:
-            return GenericRowData.ofKind(
-                    RowKind.DELETE,
-                    TypeUtils.getObjectsWithDataTypes(TiTableCodec.decodeKeyOnly(handle, tableInfo), tableInfo));
-          case PUT:
-            return GenericRowData.ofKind(
-                    RowKind.INSERT,
-                    TypeUtils.getObjectsWithDataTypes(
-                        TiTableCodec.decodeRow(row.getValue().toByteArray(), handle, tableInfo), tableInfo));
-          default:
-            throw new IllegalArgumentException("Unknown Row Op Type: " + row.getOpType().toString());
-        }
-    }
+  @Override
+  public void initializeState(final FunctionInitializationContext context) throws Exception {
+    logger.info("initialize checkpoint");
+  }
 
-    protected RowData decodeToRowData(final KvPair kvPair) {
-        final RowKey rowKey = RowKey.decode(kvPair.getKey().toByteArray());
-        final long handle = rowKey.getHandle();
+  @Override
+  public void notifyCheckpointComplete(long checkpointId) throws Exception {
+    logger.info("checkpoint completed: {}", checkpointId);
+  }
+
+  protected RowData decodeToRowData(final Row row) {
+    final RowKey rowKey = RowKey.decode(row.getKey().toByteArray());
+    final long handle = rowKey.getHandle();
+    switch (row.getOpType()) {
+      case DELETE:
         return GenericRowData.ofKind(
-                RowKind.INSERT,
-                TypeUtils.getObjectsWithDataTypes(
-                    TiTableCodec.decodeRow(kvPair.getValue().toByteArray(), handle, tableInfo), tableInfo));
+            RowKind.DELETE,
+            TypeUtils.getObjectsWithDataTypes(
+                TiTableCodec.decodeKeyOnly(handle, tableInfo), tableInfo));
+      case PUT:
+        return GenericRowData.ofKind(
+            RowKind.INSERT,
+            TypeUtils.getObjectsWithDataTypes(
+                TiTableCodec.decodeRow(row.getValue().toByteArray(), handle, tableInfo),
+                tableInfo));
+      default:
+        throw new IllegalArgumentException("Unknown Row Op Type: " + row.getOpType().toString());
+    }
+  }
+
+  protected RowData decodeToRowData(final KvPair kvPair) {
+    final RowKey rowKey = RowKey.decode(kvPair.getKey().toByteArray());
+    final long handle = rowKey.getHandle();
+    return GenericRowData.ofKind(
+        RowKind.INSERT,
+        TypeUtils.getObjectsWithDataTypes(
+            TiTableCodec.decodeRow(kvPair.getValue().toByteArray(), handle, tableInfo), tableInfo));
+  }
+
+  protected static class RowKeyWithTs implements Comparable<RowKeyWithTs> {
+    private final long timestamp;
+    private final RowKey rowKey;
+
+    private RowKeyWithTs(final long timestamp, final RowKey rowKey) {
+      this.timestamp = timestamp;
+      this.rowKey = rowKey;
     }
 
-    protected static class RowKeyWithTs implements Comparable<RowKeyWithTs> {
-        private final long timestamp;
-        private final RowKey rowKey;
+    private RowKeyWithTs(final long timestamp, final byte[] key) {
+      this(timestamp, RowKey.decode(key));
+    }
 
-        private RowKeyWithTs(final long timestamp, final RowKey rowKey) {
-            this.timestamp = timestamp;
-            this.rowKey = rowKey;
-        }
+    public long getTimestamp() {
+      return timestamp;
+    }
 
-        private RowKeyWithTs(final long timestamp, final byte[] key) {
-            this(timestamp, RowKey.decode(key));
-        }
-
-        public long getTimestamp() {
-          return timestamp;
-        }
-
-        public RowKey getRowKey() {
-          return rowKey;
-        }
-
-        @Override
-        public int compareTo(final RowKeyWithTs that) {
-            int res = Long.compare(this.timestamp, that.timestamp);
-            if (res == 0) {
-                res = Long.compare(this.rowKey.getTableId(), that.rowKey.getTableId());
-            }
-            if (res == 0) {
-                res = Long.compare(this.rowKey.getHandle(), that.rowKey.getHandle());
-            }
-            return res;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(this.timestamp, this.rowKey.getTableId(), this.rowKey.getHandle());
-        }
-
-        @Override
-        public boolean equals(final Object thatObj) {
-            if (thatObj instanceof RowKeyWithTs) {
-                final RowKeyWithTs that = (RowKeyWithTs)thatObj;
-                return this.timestamp == that.timestamp && this.rowKey.equals(that.rowKey);
-            }
-            return false;
-        }
-
-        static RowKeyWithTs ofStart(final Row row) {
-            return new RowKeyWithTs(row.getStartTs(), row.getKey().toByteArray());
-        }
-
-        static RowKeyWithTs ofCommit(final Row row) {
-            return new RowKeyWithTs(row.getCommitTs(), row.getKey().toByteArray());
-        }
+    public RowKey getRowKey() {
+      return rowKey;
     }
 
     @Override
-    public TypeInformation<RowData> getProducedType() {
-        return typeInfo;
+    public int compareTo(final RowKeyWithTs that) {
+      int res = Long.compare(this.timestamp, that.timestamp);
+      if (res == 0) {
+        res = Long.compare(this.rowKey.getTableId(), that.rowKey.getTableId());
+      }
+      if (res == 0) {
+        res = Long.compare(this.rowKey.getHandle(), that.rowKey.getHandle());
+      }
+      return res;
     }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(this.timestamp, this.rowKey.getTableId(), this.rowKey.getHandle());
+    }
+
+    @Override
+    public boolean equals(final Object thatObj) {
+      if (thatObj instanceof RowKeyWithTs) {
+        final RowKeyWithTs that = (RowKeyWithTs) thatObj;
+        return this.timestamp == that.timestamp && this.rowKey.equals(that.rowKey);
+      }
+      return false;
+    }
+
+    static RowKeyWithTs ofStart(final Row row) {
+      return new RowKeyWithTs(row.getStartTs(), row.getKey().toByteArray());
+    }
+
+    static RowKeyWithTs ofCommit(final Row row) {
+      return new RowKeyWithTs(row.getCommitTs(), row.getKey().toByteArray());
+    }
+  }
+
+  @Override
+  public TypeInformation<RowData> getProducedType() {
+    return typeInfo;
+  }
 }

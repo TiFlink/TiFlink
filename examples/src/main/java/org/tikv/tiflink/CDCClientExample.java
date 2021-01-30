@@ -17,54 +17,57 @@ import org.tikv.kvproto.Cdcpb.Event.Row;
 import org.tikv.kvproto.Coprocessor.KeyRange;
 
 public class CDCClientExample {
-    public static void main(String[] args) throws InterruptedException {
-        if (args.length < 3) {
-            System.out.println("run with pdAddress, databaseName and tableName");
-            System.exit(1);
-        }
-        final String pdAddress = args[0];
-        final String dbName = args[1];
-        final String tableName = args[2];
-        final TiConfiguration conf = TiConfiguration.createDefault(pdAddress);
-        final TiSession session = TiSession.create(conf);
+  public static void main(String[] args) throws InterruptedException {
+    if (args.length < 3) {
+      System.out.println("run with pdAddress, databaseName and tableName");
+      System.exit(1);
+    }
+    final String pdAddress = args[0];
+    final String dbName = args[1];
+    final String tableName = args[2];
+    final TiConfiguration conf = TiConfiguration.createDefault(pdAddress);
+    final TiSession session = TiSession.create(conf);
 
-        final TiTableInfo tableInfo = session.getCatalog().getTable(dbName, tableName);
-        final KeyRange keyRange = KeyRange.newBuilder()
+    final TiTableInfo tableInfo = session.getCatalog().getTable(dbName, tableName);
+    final KeyRange keyRange =
+        KeyRange.newBuilder()
             .setStart(RowKey.createMin(tableInfo.getId()).toByteString())
             .setEnd(RowKey.createBeyondMax(tableInfo.getId()).toByteString())
             .build();
 
-        final RangeSplitter splitter = RangeSplitter.newSplitter(session.getRegionManager());
-        final List<TiRegion> regions = splitter.splitRangeByRegion(Arrays.asList(keyRange))
-            .stream().map(RegionTask::getRegion).collect(Collectors.toList());
+    final RangeSplitter splitter = RangeSplitter.newSplitter(session.getRegionManager());
+    final List<TiRegion> regions =
+        splitter.splitRangeByRegion(Arrays.asList(keyRange)).stream()
+            .map(RegionTask::getRegion)
+            .collect(Collectors.toList());
 
-        final RegionCDCClientBuilder clientBuilder = 
-            new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
-        final TiTimestamp startTs = new TiTimestamp(session.getTimestamp().getPhysical(), 0);
-        try(final CDCClient client = new CDCClient(conf, clientBuilder, regions, startTs.getVersion())) {
-            client.start();
+    final RegionCDCClientBuilder clientBuilder =
+        new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
+    final TiTimestamp startTs = new TiTimestamp(session.getTimestamp().getPhysical(), 0);
+    try (final CDCClient client =
+        new CDCClient(conf, clientBuilder, regions, startTs.getVersion())) {
+      client.start();
 
-            while(true) {
-                final Row row = client.get();
-                if (row == null) {
-                    System.out.println("null");
-                } else {
-                    printRow(tableInfo, row);
-                }
-            }
+      while (true) {
+        final Row row = client.get();
+        if (row == null) {
+          System.out.println("null");
+        } else {
+          printRow(tableInfo, row);
         }
+      }
     }
+  }
 
-
-    static void printRow(final TiTableInfo tableInfo, final Row row) {
-        final RowKey rowKey = RowKey.decode(row.getKey().toByteArray());
-        System.out.printf("key: [%d %d]\n", rowKey.getTableId(), rowKey.getHandle());
-        System.out.printf("---> Type: %s\n", row.getType());
-        System.out.printf("---> OpType: %s\n", row.getOpType());
-        System.out.printf("---> StartTs: %d\n", row.getStartTs());
-        System.out.printf("---> CommitTs: %d\n", row.getCommitTs());
-        System.out.printf("---> key: %s\n", row.getKey());
-        System.out.printf("---> value: %s\n", row.getValue());
-        System.out.flush();
-    }
+  static void printRow(final TiTableInfo tableInfo, final Row row) {
+    final RowKey rowKey = RowKey.decode(row.getKey().toByteArray());
+    System.out.printf("key: [%d %d]\n", rowKey.getTableId(), rowKey.getHandle());
+    System.out.printf("---> Type: %s\n", row.getType());
+    System.out.printf("---> OpType: %s\n", row.getOpType());
+    System.out.printf("---> StartTs: %d\n", row.getStartTs());
+    System.out.printf("---> CommitTs: %d\n", row.getCommitTs());
+    System.out.printf("---> key: %s\n", row.getKey());
+    System.out.printf("---> value: %s\n", row.getValue());
+    System.out.flush();
+  }
 }
