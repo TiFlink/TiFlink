@@ -4,20 +4,23 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import org.apache.flink.api.common.state.CheckpointListener;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
 import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
-import org.apache.flink.streaming.api.checkpoint.ExternallyInducedSource.CheckpointTrigger;
 import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.types.RowKind;
-import org.apache.flink.util.FlinkException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tikv.cdc.CDCClient;
@@ -28,15 +31,14 @@ import org.tikv.common.codec.TiTableCodec;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.region.TiRegion;
+import org.tikv.flink.connectors.coordinators.SnapshotCoordinator;
 import org.tikv.kvproto.Cdcpb.Event.Row;
 import org.tikv.kvproto.Kvrpcpb.KvPair;
 import org.tikv.txn.KVClient;
+import shade.com.google.common.base.Preconditions;
 
 public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
-    implements CheckpointListener,
-        CheckpointedFunction,
-        CheckpointTrigger,
-        ResultTypeQueryable<RowData> {
+    implements CheckpointListener, CheckpointedFunction, ResultTypeQueryable<RowData> {
   private static final long serialVersionUID = 8647392870748599256L;
 
   private Logger logger = LoggerFactory.getLogger(FlinkTikvConsumer.class);
@@ -45,27 +47,33 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   private final TiTableInfo tableInfo;
   private final List<TiRegion> regions;
   private final TypeInformation<RowData> typeInfo;
-  private final long startTs;
+  private final SnapshotCoordinator coordinator;
 
   // Task local variables
   private List<TiRegion> taskRegions;
   private TiSession session = null;
   private CDCClient client = null;
 
+  private long resolvedTs = 0;
+  private BlockingQueue<Long> tsBarriers = null;
+
   private TreeMap<RowKeyWithTs, Row> prewrites = null;
   private TreeMap<RowKeyWithTs, Row> commits = null;
+
+  // Flink State
+  private ListState<Long> resolvedTsState;
 
   public FlinkTikvConsumer(
       final TiConfiguration conf,
       final TiTableInfo tableInfo,
       final List<TiRegion> regions,
       final TypeInformation<RowData> typeInfo,
-      final long startTs) {
+      final SnapshotCoordinator coordinator) {
     this.conf = conf;
     this.tableInfo = tableInfo;
     this.regions = regions;
     this.typeInfo = typeInfo;
-    this.startTs = startTs;
+    this.coordinator = coordinator;
   }
 
   @Override
@@ -88,8 +96,14 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
     final RegionCDCClientBuilder clientBuilder =
         new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
-    client = new CDCClient(conf, clientBuilder, taskRegions, startTs);
+    client =
+        new CDCClient(
+            conf,
+            clientBuilder,
+            taskRegions,
+            resolvedTs > 0 ? resolvedTs : coordinator.getInitTs());
 
+    tsBarriers = new ArrayBlockingQueue<>(1 << 5);
     prewrites = new TreeMap<>();
     commits = new TreeMap<>();
   }
@@ -101,18 +115,21 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
       ctx.markAsTemporarilyIdle();
     }
     // scan original table first
-
-    final KVClient scanClient = session.createKVClient();
-    for (final TiRegion region : taskRegions) {
-      for (final KvPair pair : scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
-        if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
-          ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
+    if (resolvedTs == 0) {
+      long startTs = coordinator.getInitTs();
+      final KVClient scanClient = session.createKVClient();
+      for (final TiRegion region : taskRegions) {
+        for (final KvPair pair :
+            scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
+          if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
+            ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
+          }
         }
       }
-    }
 
-    long resolvedTs = startTs;
-    ctx.emitWatermark(new Watermark(resolvedTs));
+      resolvedTs = startTs;
+      ctx.emitWatermark(new Watermark(resolvedTs));
+    }
 
     // start consuming CDC
     client.start();
@@ -124,9 +141,14 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
     while (true) {
       handleRow(client.get());
-      if (client.getMinResolvedTs() > resolvedTs) {
-        resolvedTs = client.getMinResolvedTs();
-        flushRows(ctx, resolvedTs);
+      if (!tsBarriers.isEmpty() && client.getMinResolvedTs() >= tsBarriers.peek()) {
+        Long tsBarrier = tsBarriers.poll();
+        Preconditions.checkState(
+            tsBarrier >= resolvedTs, "tsBarrier must be monotonically increasing!");
+
+        flushRows(ctx, tsBarrier);
+        resolvedTs = tsBarrier;
+        tsBarrier.notify(); // notify snapshot function to run
       }
     }
   }
@@ -171,23 +193,32 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
   @Override
   public void cancel() {
-    // TODO Auto-generated method stub
+    // TODO: implement this
 
-  }
-
-  @Override
-  public void triggerCheckpoint(final long checkpointId) throws FlinkException {
-    logger.info("triggered checkpoint: {}", checkpointId);
   }
 
   @Override
   public void snapshotState(final FunctionSnapshotContext context) throws Exception {
     logger.info("snapshotState checkpoint: {}", context.getCheckpointId());
+    Long ts = coordinator.getStartTs(context.getCheckpointId());
+    synchronized (ts) {
+      tsBarriers.offer(ts);
+      ts.wait();
+      resolvedTsState.clear();
+      resolvedTsState.add(ts);
+    }
   }
 
   @Override
   public void initializeState(final FunctionInitializationContext context) throws Exception {
     logger.info("initialize checkpoint");
+    resolvedTsState =
+        context
+            .getOperatorStateStore()
+            .getListState(new ListStateDescriptor<>("resolvedTsState", LongSerializer.INSTANCE));
+    for (final Long ts : resolvedTsState.get()) {
+      resolvedTs = ts;
+    }
   }
 
   @Override

@@ -34,6 +34,7 @@ import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.util.ConcreteBackOffer;
+import org.tikv.flink.connectors.coordinators.SnapshotCoordinator;
 import org.tikv.txn.TwoPhaseCommitter;
 import shade.com.google.common.base.Preconditions;
 
@@ -47,17 +48,21 @@ public class FlinkTikvProducer
 
   private final TiConfiguration conf;
   private final TiTableInfo tableInfo;
+  private final SnapshotCoordinator coordinator;
   private final FieldGetter[] fieldGetters;
-  ;
   private final int pkIndex;
 
   private TiSession session = null;
 
   public FlinkTikvProducer(
-      final TiConfiguration conf, final TiTableInfo tableInfo, final DataType dataType) {
+      final TiConfiguration conf,
+      final TiTableInfo tableInfo,
+      final DataType dataType,
+      final SnapshotCoordinator coordinator) {
     super(new TransactionStateSerializer(), new ContextStateSerializer());
     this.conf = conf;
     this.tableInfo = tableInfo;
+    this.coordinator = coordinator;
 
     final List<LogicalType> colTypes = dataType.getLogicalType().getChildren();
     fieldGetters = new FieldGetter[colTypes.size()];
