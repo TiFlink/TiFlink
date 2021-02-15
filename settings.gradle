@@ -8,4 +8,5 @@
  */
 
 rootProject.name = 'tiflink'
+
 include('client', 'flink', 'examples')

@@ -10,7 +10,6 @@ import org.apache.flink.types.RowKind;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.common.meta.TiTimestamp;
 
 public class TikvDynamicSource implements ScanTableSource {
 
@@ -49,8 +48,6 @@ public class TikvDynamicSource implements ScanTableSource {
       final TiTableInfo tableInfo = session.getCatalog().getTable(database, table);
       Objects.nonNull(tableInfo);
 
-      final TiTimestamp ts = new TiTimestamp(session.getTimestamp().getPhysical(), 0);
-
       final TableSchema.Builder schemaBuilder = TableSchema.builder();
       tableInfo
           .getColumns()
@@ -62,8 +59,7 @@ public class TikvDynamicSource implements ScanTableSource {
               conf,
               tableInfo,
               RegionUtils.getTableRegions(session, tableInfo),
-              runtimeProviderContext.createTypeInformation(schemaBuilder.build().toRowDataType()),
-              ts.getVersion()),
+              runtimeProviderContext.createTypeInformation(schemaBuilder.build().toRowDataType())),
           false);
     } catch (final Throwable e) {
       throw new RuntimeException("Can't create consumer", e);
