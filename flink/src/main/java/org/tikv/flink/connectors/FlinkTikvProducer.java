@@ -89,9 +89,15 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     cachedValues.add(encodeRow(row));
 
     if (cachedValues.size() >= conf.getScanBatchSize()) {
-      prewrite(txnHolder.get(), txnHolder.getCommitter(), cachedValues);
-      cachedValues.clear();
+      flushCachedValues();
     }
+  }
+
+  private void flushCachedValues() {
+    prewrite(txnHolder.get(), txnHolder.getCommitter(), cachedValues);
+    txnHolder.addSecondaryKeys(
+        () -> cachedValues.stream().map(BytePairWrapper::getKey).map(ByteWrapper::new).iterator());
+    cachedValues.clear();
   }
 
   protected TwoPhaseCommitter createCommitter(final Transaction txn) {
@@ -164,6 +170,8 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
 
   @Override
   public void snapshotState(final FunctionSnapshotContext context) throws Exception {
+    flushCachedValues();
+
     transactionState.clear();
     transactionState.add(txnHolder.get());
     prewrittenTxnHolders.put(context.getCheckpointId(), txnHolder);
