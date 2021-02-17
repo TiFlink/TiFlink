@@ -80,8 +80,7 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
 
   @Override
   public void invoke(final RowData row, final Context context) throws Exception {
-    if (txnHolder.get().getStatus() == Transaction.Status.NEW
-        || Objects.isNull(txnHolder.getCommitter())) {
+    if (txnHolder.get().isNew() || Objects.isNull(txnHolder.getCommitter())) {
       final Transaction newTxn =
           coordinator.prewriteTransaction(txnHolder.get().getCheckpointId(), tableInfo.getId());
       txnHolder = new TransactionHolder(newTxn, createCommitter(newTxn));
@@ -109,6 +108,10 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
 
   protected void commit(final Transaction txn) {
     coordinator.commitTransaction(txn.getCheckpointId());
+  }
+
+  protected void abort(final Transaction txn) {
+    coordinator.abortTransaction(txn.getCheckpointId());
   }
 
   protected void commitSecondaryKeys(
@@ -178,21 +181,14 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
                 new ListStateDescriptor<>("transactionState", TransactionSerializer.INSTANCE));
 
     for (final Transaction txn : transactionState.get()) {
-      switch (txn.getStatus()) {
-        case NEW:
-          coordinator.abortTransaction(txn.getCheckpointId());
-          break;
-        case PREWRITE:
-          coordinator.commitTransaction(txn.getCheckpointId());
-          break;
-        default:
-          break;
+      if (txn.isNew()) {
+        abort(txn);
+      } else {
+        commit(txn);
       }
     }
 
-    // TODO: trigger scan and gc to remove abort transactions
     txnHolder = new TransactionHolder(coordinator.openTransaction(0));
-
     transactionState.add(txnHolder.get());
   }
 

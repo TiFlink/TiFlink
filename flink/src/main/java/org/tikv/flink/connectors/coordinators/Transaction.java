@@ -20,4 +20,26 @@ public interface Transaction {
   byte[] getPrimaryKey();
 
   Status getStatus();
+
+  default boolean isTerminated() {
+    switch (getStatus()) {
+      case ABORTED:
+      case COMMITTED:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  default boolean isNew() {
+    return getStatus() == Status.NEW;
+  }
+
+  default boolean isCommitted() {
+    return getStatus() == Status.COMMITTED;
+  }
+
+  default boolean isAborted() {
+    return getStatus() == Status.ABORTED;
+  }
 }
