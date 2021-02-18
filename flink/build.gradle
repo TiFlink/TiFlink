@@ -4,6 +4,7 @@
 
 plugins {
     id 'org.tiflink.java-library-conventions'
+    id 'com.google.protobuf' version '0.8.15'
 }
 
 dependencies {
@@ -12,6 +13,11 @@ dependencies {
     implementation 'org.tikv:tikv-client-java:3.0.1'
     implementation 'org.slf4j:slf4j-api:1.7.30'
 
+    implementation 'io.grpc:grpc-netty-shaded:1.35.0'
+    implementation 'io.grpc:grpc-protobuf:1.35.0'
+    implementation 'io.grpc:grpc-stub:1.35.0'
+    compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
+
     compileOnly 'org.immutables:value:2.8.2'
     annotationProcessor 'org.immutables:value:2.8.2'
 
@@ -19,11 +25,29 @@ dependencies {
     api 'org.apache.flink:flink-table-api-java-bridge_2.12:1.12.0'
 }
 
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.12.0"
+    }
+    plugins {
+        grpc {
+            artifact = 'io.grpc:protoc-gen-grpc-java:1.35.0'
+        }
+    }
+    generateProtoTasks {
+        all()*.plugins {
+            grpc {}
+        }
+    }
+}
+
 // Fix jdt.ls
 sourceSets {
     main {
         java {
             srcDirs 'build/generated/sources/annotationProcessor/java/main'
+            srcDirs 'build/generated/source/proto/main/java/'
+            srcDirs 'build/generated/source/proto/main/grpc/'
         }
     }
 }
