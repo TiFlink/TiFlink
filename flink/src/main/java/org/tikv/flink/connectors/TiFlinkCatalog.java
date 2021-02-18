@@ -34,7 +34,10 @@ import org.apache.flink.table.catalog.stats.CatalogTableStatistics;
 import org.apache.flink.table.expressions.Expression;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
+import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiDBInfo;
+import org.tikv.common.meta.TiIndexColumn;
+import org.tikv.common.meta.TiIndexInfo;
 import org.tikv.common.meta.TiTableInfo;
 import shade.com.google.common.collect.ImmutableMap;
 
@@ -384,6 +387,21 @@ public class TiFlinkCatalog implements Catalog {
     tableInfo
         .getColumns()
         .forEach(col -> builder.field(col.getName(), TypeUtils.getFlinkType(col.getType())));
+    final Optional<TiIndexInfo> pkIndexOptional =
+        tableInfo.getIndices().stream().filter(TiIndexInfo::isPrimary).findFirst();
+    if (pkIndexOptional.isPresent()) {
+      final TiIndexInfo pkIndexInfo = pkIndexOptional.get();
+      builder.primaryKey(
+          pkIndexInfo.getIndexColumns().stream()
+              .map(TiIndexColumn::getName)
+              .toArray(String[]::new));
+    } else {
+      builder.primaryKey(
+          tableInfo.getColumns().stream()
+              .filter(TiColumnInfo::isPrimaryKey)
+              .map(TiColumnInfo::getName)
+              .toArray(String[]::new));
+    }
     return builder.build();
   }
 }
