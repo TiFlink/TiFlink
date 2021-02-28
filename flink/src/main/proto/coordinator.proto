@@ -1,15 +1,28 @@
 package org.tikv.flink.connectors.coordinators.grpc; 
 
-service Coordinator {
-  rpc transaction(TransactionRequest) returns (TransactionResponse);
+service CoordinatorService {
+  rpc transactions(TxnRequest) returns (TxnResponse);
 }
 
-message Meta {
-  required string client = 1;
-  required string clientVersion = 2;
+message TxnRequest {
+  enum Action {
+    OPEN = 0;
+    PRIWRITE = 1;
+    COMMIT = 2;
+    ABORT = 3;
+    GET = 4;
+  }
+  required Action action = 1;
+  required int64 checkpointId = 2;
+  optional int64 tableId = 3;
+  message Meta {
+    required string clientName = 1;
+    required string clientVersion = 2;
+  }
+  optional Meta meta = 4;
 }
 
-message Transaction {
+message TxnResponse {
   enum Status {
     NEW = 0;
     PRIWRITE = 1;
@@ -21,23 +34,9 @@ message Transaction {
   optional int64 commitTs = 3;
   optional bytes primaryKey = 4;
   optional Status status = 5 [default = NEW];
-}
-
-message TransactionRequest {
-  enum Action {
-    OPEN = 0;
-    PRIWRITE = 1;
-    COMMIT = 2;
-    ABORT = 3;
-    GET = 4;
+  message Meta {
+    required string serverName = 1;
+    required string serverVersion = 2;
   }
-  required Action action = 1;
-  required string identifier = 2; // identifier shared by all clients
-  required int64 checkpointId = 3;
-  optional Meta meta = 4;
-}
-
-message TransactionResponse {
-  required string identifier = 1;
-  required Transaction transaction = 2;
+  optional Meta meta = 6;
 }

@@ -35,6 +35,10 @@ public interface Transaction {
     return getStatus() == Status.NEW;
   }
 
+  default boolean isPrewriting() {
+    return getStatus() == Status.PREWRITE;
+  }
+
   default boolean isCommitted() {
     return getStatus() == Status.COMMITTED;
   }
