@@ -41,6 +41,9 @@ public class RegionStateManager {
   }
 
   public long updateTs(final long regionId, final long resolvedTs) {
+    if (!indexMap.containsKey(regionId)) {
+      return 0;
+    }
     int index = indexMap.get(regionId);
     minSegTree[index] = resolvedTs;
 

@@ -5,9 +5,12 @@ import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.meta.TiTimestamp;
+import org.tikv.common.util.ConcreteBackOffer;
 import org.tikv.flink.connectors.coordinator.ImmutableTransaction;
 import org.tikv.flink.connectors.coordinator.Transaction;
 import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnRequest;
@@ -16,6 +19,9 @@ import org.tikv.txn.TwoPhaseCommitter;
 
 class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
     implements AutoCloseable {
+  private static Logger logger = LoggerFactory.getLogger(GrpcService.class);
+  private static byte[] EMPTY_VALUE = new byte[0];
+
   static final int RETAIN_TXNS = 100;
 
   private final LinkedHashMap<Long, TransactionHolder> transactions = new LinkedHashMap<>();
@@ -30,6 +36,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
   }
 
   protected Transaction openTransaction(final long checkpointId) {
+    logger.info("open transaction: {}", checkpointId);
     synchronized (transactions) {
       final TransactionHolder holder =
           transactions.computeIfAbsent(checkpointId, (id) -> new TransactionHolder());
@@ -52,6 +59,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
   }
 
   protected Transaction prewriteTransaction(final long checkpointId, final long tableId) {
+    logger.info("prewrite transaction: {}, tableId: {}", checkpointId, tableId);
     final TransactionHolder holder = transactions.get(checkpointId);
     Preconditions.checkNotNull(holder, "Transaction not found");
 
@@ -75,11 +83,19 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
   }
 
   protected Transaction commitTransaction(final long checkpointId) {
+    logger.info("commit transaction: {}", checkpointId);
     final TransactionHolder holder = transactions.get(checkpointId);
     Preconditions.checkNotNull(holder, "Transaction not found");
 
     synchronized (holder) {
       if (holder.getTxn().isCommitted()) {
+        return holder.getTxn();
+      }
+
+      if (holder.getTxn().isNew()) {
+        // No prewrite has done. just return committed status
+        holder.setTxn(
+            ImmutableTransaction.builder().from(holder.getTxn()).commitTs(getTimestamp()).build());
         return holder.getTxn();
       }
 
@@ -110,6 +126,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
   }
 
   protected Transaction abortTransaction(final long checkpointId) {
+    logger.info("abort transaction: {}", checkpointId);
     final TransactionHolder holder = transactions.get(checkpointId);
     if (holder == null) {
       // fail silently for unknown transactions
@@ -144,12 +161,18 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
     return ts.getPhysical();
   }
 
-  private void prewritePrimaryKey(final byte[] primaryKey, final TwoPhaseCommitter committer) {}
+  private void prewritePrimaryKey(final byte[] primaryKey, final TwoPhaseCommitter committer) {
+    committer.prewritePrimaryKey(ConcreteBackOffer.newRawKVBackOff(), primaryKey, EMPTY_VALUE);
+  }
 
   private void commitPrimaryKey(
-      final byte[] primaryKey, final long commitTs, final TwoPhaseCommitter committer) {}
+      final byte[] primaryKey, final long commitTs, final TwoPhaseCommitter committer) {
+    committer.commitPrimaryKey(ConcreteBackOffer.newRawKVBackOff(), primaryKey, commitTs);
+  }
 
-  private void abortPrimaryKey(final byte[] primaryKey, final TwoPhaseCommitter committer) {}
+  private void abortPrimaryKey(final byte[] primaryKey, final TwoPhaseCommitter committer) {
+    // TODO: implement this
+  }
 
   private void trimTransactions() {
     synchronized (transactions) {
@@ -201,6 +224,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
   @Override
   public void transactions(
       final TxnRequest request, final StreamObserver<TxnResponse> responseObserver) {
+    logger.info("server received API call");
     try {
       switch (request.getAction()) {
         case OPEN:
@@ -228,6 +252,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
           throw new UnsupportedOperationException();
       }
     } catch (final Throwable t) {
+      logger.error("Server RPC error", t);
       responseObserver.onError(t);
     } finally {
       responseObserver.onCompleted();

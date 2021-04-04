@@ -32,5 +32,5 @@ dependencies {
 
 application {
     // Define the main class for the application.
-    mainClass = 'org.tikv.tiflink.server.Application'
+    mainClass = 'org.tikv.tiflink.TiFlinkExample'
 }

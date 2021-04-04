@@ -4,6 +4,8 @@ import org.immutables.value.Value;
 
 @Value.Immutable
 public interface Transaction {
+  static final byte[] EMPTY_PK = new byte[0];
+
   public enum Status {
     NEW,
     PREWRITE,
@@ -15,11 +17,20 @@ public interface Transaction {
 
   long getStartTs();
 
-  long getCommitTs();
+  @Value.Default
+  default long getCommitTs() {
+    return 0;
+  }
 
-  byte[] getPrimaryKey();
+  @Value.Default
+  default byte[] getPrimaryKey() {
+    return EMPTY_PK;
+  }
 
-  Status getStatus();
+  @Value.Default
+  default Status getStatus() {
+    return Status.NEW;
+  }
 
   default boolean isTerminated() {
     switch (getStatus()) {

@@ -46,9 +46,9 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   private final int pkIndex;
   private final Coordinator coordinator;
 
-  private transient volatile TransactionHolder txnHolder = null;
-  private final transient List<BytePairWrapper> cachedValues = new ArrayList<>();
-  private final transient Map<Long, TransactionHolder> prewrittenTxnHolders = new HashMap<>();
+  private transient volatile TransactionHolder txnHolder;
+  private transient List<BytePairWrapper> cachedValues;
+  private transient Map<Long, TransactionHolder> prewrittenTxnHolders;
 
   // transactions
   protected transient ListState<Transaction> transactionState;
@@ -61,6 +61,7 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     this.conf = conf;
     this.tableInfo = tableInfo;
     this.coordinator = coordinator;
+    Preconditions.checkNotNull(coordinator, "coordinator can't be null");
 
     final List<LogicalType> colTypes = dataType.getLogicalType().getChildren();
     fieldGetters = new FieldGetter[colTypes.size()];
@@ -80,7 +81,8 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   public void open(final Configuration config) throws Exception {
     logger.info("open sink");
     super.open(config);
-    coordinator.open();
+    cachedValues = new ArrayList<>();
+    prewrittenTxnHolders = new HashMap<>();
   }
 
   @Override
@@ -175,7 +177,9 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
 
   @Override
   public void snapshotState(final FunctionSnapshotContext context) throws Exception {
-    flushCachedValues();
+    if (!cachedValues.isEmpty()) {
+      flushCachedValues();
+    }
 
     transactionState.clear();
     transactionState.add(txnHolder.get());

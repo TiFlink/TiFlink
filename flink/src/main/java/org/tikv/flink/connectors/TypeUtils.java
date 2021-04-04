@@ -41,7 +41,7 @@ public class TypeUtils {
    * @param dataType TiKV DataType
    * @return Flink DataType
    */
-  public static DataType getFlinkType(org.tikv.common.types.DataType dataType) {
+  public static DataType getNullableFlinkType(org.tikv.common.types.DataType dataType) {
     boolean unsigned = dataType.isUnsigned();
     int length = (int) dataType.getLength();
     switch (dataType.getType()) {
@@ -97,6 +97,11 @@ public class TypeUtils {
         throw new IllegalArgumentException(
             format("can not get flink datatype by tikv type: %s", dataType));
     }
+  }
+
+  public static DataType getFlinkType(final org.tikv.common.types.DataType dataType) {
+    final DataType typ = getNullableFlinkType(dataType);
+    return dataType.isNotNull() ? typ.notNull() : typ;
   }
 
   /**

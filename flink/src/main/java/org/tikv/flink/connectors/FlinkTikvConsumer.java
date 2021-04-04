@@ -76,7 +76,6 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   @Override
   public void open(final Configuration config) throws Exception {
     super.open(config);
-    coordinator.open();
     session = TiSession.create(conf);
 
     final int numOfTasks = this.getRuntimeContext().getNumberOfParallelSubtasks();
