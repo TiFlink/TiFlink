@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinators.grpc;
+package org.tikv.flink.connectors.coordinator.grpc;
 
 import com.google.common.base.Preconditions;
 import com.google.protobuf.ByteString;
@@ -8,10 +8,10 @@ import java.util.LinkedHashMap;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.meta.TiTimestamp;
-import org.tikv.flink.connectors.coordinators.ImmutableTransaction;
-import org.tikv.flink.connectors.coordinators.Transaction;
-import org.tikv.flink.connectors.coordinators.grpc.Coordinator.TxnRequest;
-import org.tikv.flink.connectors.coordinators.grpc.Coordinator.TxnResponse;
+import org.tikv.flink.connectors.coordinator.ImmutableTransaction;
+import org.tikv.flink.connectors.coordinator.Transaction;
+import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnRequest;
+import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnResponse;
 import org.tikv.txn.TwoPhaseCommitter;
 
 class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
@@ -62,7 +62,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
 
     synchronized (holder) {
       Preconditions.checkState(holder.getTxn().isNew(), "Transaction status should be NEW");
-      final byte[] pk = new byte[0]; // TODO: create primaryKey
+      final byte[] pk = GrpcCommitKey.encode(tableId, txn.getCheckpointId(), txn.getStartTs());
       prewritePrimaryKey(pk, holder.getCommitter());
       holder.setTxn(
           ImmutableTransaction.builder()

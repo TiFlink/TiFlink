@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinators;
+package org.tikv.flink.connectors.coordinator;
 
 import org.immutables.value.Value;
 

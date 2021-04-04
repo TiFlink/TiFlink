@@ -28,8 +28,8 @@ import org.tikv.common.codec.TiTableCodec;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.region.TiRegion;
-import org.tikv.flink.connectors.coordinators.SnapshotCoordinator;
-import org.tikv.flink.connectors.coordinators.Transaction;
+import org.tikv.flink.connectors.coordinator.Coordinator;
+import org.tikv.flink.connectors.coordinator.Transaction;
 import org.tikv.kvproto.Cdcpb.Event.Row;
 import org.tikv.kvproto.Kvrpcpb.KvPair;
 import org.tikv.txn.KVClient;
@@ -44,12 +44,12 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   private final TiTableInfo tableInfo;
   private final List<TiRegion> regions;
   private final TypeInformation<RowData> typeInfo;
+  private final Coordinator coordinator;
 
   // Task local variables
   private transient List<TiRegion> taskRegions;
   private transient TiSession session = null;
   private transient CDCClient client = null;
-  private transient SnapshotCoordinator coordinator;
 
   private transient volatile long resolvedTs = 0;
   private transient volatile Transaction currentTransaction = null;
@@ -64,16 +64,19 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
       final TiConfiguration conf,
       final TiTableInfo tableInfo,
       final List<TiRegion> regions,
-      final TypeInformation<RowData> typeInfo) {
+      final TypeInformation<RowData> typeInfo,
+      final Coordinator coordinator) {
     this.conf = conf;
     this.tableInfo = tableInfo;
     this.regions = regions;
     this.typeInfo = typeInfo;
+    this.coordinator = coordinator;
   }
 
   @Override
   public void open(final Configuration config) throws Exception {
     super.open(config);
+    coordinator.open();
     session = TiSession.create(conf);
 
     final int numOfTasks = this.getRuntimeContext().getNumberOfParallelSubtasks();
@@ -188,8 +191,12 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
   @Override
   public void cancel() {
-    // TODO: implement this
-
+    // TODO: abort pending transactions
+    try {
+      coordinator.close();
+    } catch (final Exception e) {
+      logger.error("Unable to close coordinator", e);
+    }
   }
 
   @Override

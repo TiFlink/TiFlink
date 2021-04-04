@@ -7,6 +7,8 @@ import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.tikv.common.TiConfiguration;
 import org.tikv.flink.connectors.TiFlinkCatalog;
+import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
+import org.tikv.flink.connectors.coordinator.grpc.GrpcProvider;
 import shade.com.google.common.base.Preconditions;
 
 public class TiFlinkExample {
@@ -31,8 +33,9 @@ public class TiFlinkExample {
     env.getCheckpointConfig().setCheckpointTimeout(60000);
     env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
 
+    final CoordinatorProvider provider = new GrpcProvider(conf);
     final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
-    tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName));
+    tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName, provider));
 
     tableEnv.useCatalog("tikv");
 

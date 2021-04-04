@@ -10,22 +10,29 @@ import org.apache.flink.types.RowKind;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.meta.TiTableInfo;
+import org.tikv.flink.connectors.coordinator.Coordinator;
 
 public class TikvDynamicSource implements ScanTableSource {
 
   private final String pdAddress;
   private final String database;
   private final String table;
+  private final Coordinator coordinator;
 
-  public TikvDynamicSource(final String pdAddress, final String database, final String table) {
+  public TikvDynamicSource(
+      final String pdAddress,
+      final String database,
+      final String table,
+      final Coordinator coordinator) {
     this.pdAddress = pdAddress;
     this.database = database;
     this.table = table;
+    this.coordinator = coordinator;
   }
 
   @Override
   public DynamicTableSource copy() {
-    return new TikvDynamicSource(pdAddress, database, table);
+    return new TikvDynamicSource(pdAddress, database, table, coordinator);
   }
 
   @Override
@@ -59,7 +66,8 @@ public class TikvDynamicSource implements ScanTableSource {
               conf,
               tableInfo,
               RegionUtils.getTableRegions(session, tableInfo),
-              runtimeProviderContext.createTypeInformation(schemaBuilder.build().toRowDataType())),
+              runtimeProviderContext.createTypeInformation(schemaBuilder.build().toRowDataType()),
+              coordinator),
           false);
     } catch (final Throwable e) {
       throw new RuntimeException("Can't create consumer", e);

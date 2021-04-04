@@ -6,8 +6,8 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.TypeSerializerSnapshot;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
-import org.tikv.flink.connectors.coordinators.ImmutableTransaction;
-import org.tikv.flink.connectors.coordinators.Transaction;
+import org.tikv.flink.connectors.coordinator.ImmutableTransaction;
+import org.tikv.flink.connectors.coordinator.Transaction;
 
 public class TransactionSerializer extends TypeSerializer<Transaction> {
   private static final long serialVersionUID = 6896453170029198335L;

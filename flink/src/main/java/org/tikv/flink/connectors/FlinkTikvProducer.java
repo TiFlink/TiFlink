@@ -28,8 +28,8 @@ import org.tikv.common.codec.TiTableCodec;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.flink.connectors.coordinators.SnapshotCoordinator;
-import org.tikv.flink.connectors.coordinators.Transaction;
+import org.tikv.flink.connectors.coordinator.Coordinator;
+import org.tikv.flink.connectors.coordinator.Transaction;
 import org.tikv.txn.TwoPhaseCommitter;
 import shade.com.google.common.base.Preconditions;
 
@@ -44,8 +44,8 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   private final TiTableInfo tableInfo;
   private final FieldGetter[] fieldGetters;
   private final int pkIndex;
+  private final Coordinator coordinator;
 
-  private transient SnapshotCoordinator coordinator = null;
   private transient volatile TransactionHolder txnHolder = null;
   private final transient List<BytePairWrapper> cachedValues = new ArrayList<>();
   private final transient Map<Long, TransactionHolder> prewrittenTxnHolders = new HashMap<>();
@@ -54,9 +54,13 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   protected transient ListState<Transaction> transactionState;
 
   public FlinkTikvProducer(
-      final TiConfiguration conf, final TiTableInfo tableInfo, final DataType dataType) {
+      final TiConfiguration conf,
+      final TiTableInfo tableInfo,
+      final DataType dataType,
+      final Coordinator coordinator) {
     this.conf = conf;
     this.tableInfo = tableInfo;
+    this.coordinator = coordinator;
 
     final List<LogicalType> colTypes = dataType.getLogicalType().getChildren();
     fieldGetters = new FieldGetter[colTypes.size()];
@@ -76,6 +80,7 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   public void open(final Configuration config) throws Exception {
     logger.info("open sink");
     super.open(config);
+    coordinator.open();
   }
 
   @Override

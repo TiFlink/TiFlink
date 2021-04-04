@@ -39,6 +39,8 @@ import org.tikv.common.meta.TiDBInfo;
 import org.tikv.common.meta.TiIndexColumn;
 import org.tikv.common.meta.TiIndexInfo;
 import org.tikv.common.meta.TiTableInfo;
+import org.tikv.flink.connectors.coordinator.Coordinator;
+import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
 import shade.com.google.common.collect.ImmutableMap;
 
 public class TiFlinkCatalog implements Catalog {
@@ -46,18 +48,23 @@ public class TiFlinkCatalog implements Catalog {
   private final TiConfiguration conf;
   private final String name;
   private final String defaultDatabase;
+  private final CoordinatorProvider coordinatorProvider;
 
   private Optional<TiSession> session = Optional.empty();
 
   public TiFlinkCatalog(
-      final TiConfiguration conf, final String name, final String defaultDatabase) {
+      final TiConfiguration conf,
+      final String name,
+      final String defaultDatabase,
+      final CoordinatorProvider coordinatorProvider) {
     this.conf = conf;
     this.name = name;
     this.defaultDatabase = defaultDatabase;
+    this.coordinatorProvider = coordinatorProvider;
   }
 
-  public TiFlinkCatalog(final TiConfiguration conf) {
-    this(conf, "tiflink", "default");
+  public TiFlinkCatalog(final TiConfiguration conf, final CoordinatorProvider coordinatorProvider) {
+    this(conf, "tiflink", "default", coordinatorProvider);
   }
 
   @Override
@@ -174,14 +181,17 @@ public class TiFlinkCatalog implements Catalog {
             tablePath.getDatabaseName(),
             TikvOptions.TABLE.key(),
             tablePath.getObjectName());
-    Optional<CatalogTableImpl> res =
+    Optional<TableImpl> res =
         session
             .flatMap(
                 s ->
                     Optional.ofNullable(
                         s.getCatalog()
                             .getTable(tablePath.getDatabaseName(), tablePath.getObjectName())))
-            .map(t -> new CatalogTableImpl(getTableSchema(t), tableOptions, ""));
+            .map(
+                t ->
+                    new TableImpl(
+                        getTableSchema(t), tableOptions, coordinatorProvider.createCoordinator()));
     if (res.isEmpty()) {
       throw new TableNotExistException("name", tablePath);
     }
@@ -403,5 +413,21 @@ public class TiFlinkCatalog implements Catalog {
               .toArray(String[]::new));
     }
     return builder.build();
+  }
+
+  public static class TableImpl extends CatalogTableImpl {
+    private final Coordinator coordinator;
+
+    TableImpl(
+        final TableSchema schema,
+        final Map<String, String> properties,
+        final Coordinator coordinator) {
+      super(schema, properties, "");
+      this.coordinator = coordinator;
+    }
+
+    public Coordinator getCoordinator() {
+      return coordinator;
+    }
   }
 }

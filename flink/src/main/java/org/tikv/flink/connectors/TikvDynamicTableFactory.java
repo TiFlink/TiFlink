@@ -1,9 +1,11 @@
 package org.tikv.flink.connectors;
 
+import com.google.common.base.Preconditions;
 import java.util.Collections;
 import java.util.Set;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.source.DynamicTableSource;
 import org.apache.flink.table.factories.DynamicTableSinkFactory;
@@ -11,6 +13,7 @@ import org.apache.flink.table.factories.DynamicTableSourceFactory;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.factories.FactoryUtil.TableFactoryHelper;
 import org.apache.flink.table.types.DataType;
+import org.tikv.flink.connectors.coordinator.Coordinator;
 import shade.com.google.common.collect.ImmutableSet;
 
 public class TikvDynamicTableFactory implements DynamicTableSourceFactory, DynamicTableSinkFactory {
@@ -41,8 +44,13 @@ public class TikvDynamicTableFactory implements DynamicTableSourceFactory, Dynam
     final String table = tableOptions.get(TikvOptions.TABLE);
 
     final DataType tp = context.getCatalogTable().getSchema().toPhysicalRowDataType();
+    final CatalogTable catalogTable = context.getCatalogTable();
 
-    return new TikvDynamicSink(pdAddress, database, table, tp);
+    Preconditions.checkState(
+        catalogTable instanceof TiFlinkCatalog.TableImpl, "Invalid CatalogTable implementation");
+
+    final Coordinator coordinator = ((TiFlinkCatalog.TableImpl) catalogTable).getCoordinator();
+    return new TikvDynamicSink(pdAddress, database, table, tp, coordinator);
   }
 
   @Override
@@ -54,6 +62,11 @@ public class TikvDynamicTableFactory implements DynamicTableSourceFactory, Dynam
     final String database = tableOptions.get(TikvOptions.DATABASE);
     final String table = tableOptions.get(TikvOptions.TABLE);
 
-    return new TikvDynamicSource(pdAddress, database, table);
+    final CatalogTable catalogTable = context.getCatalogTable();
+
+    Preconditions.checkState(
+        catalogTable instanceof TiFlinkCatalog.TableImpl, "Invalid CatalogTable implementation");
+    final Coordinator coordinator = ((TiFlinkCatalog.TableImpl) catalogTable).getCoordinator();
+    return new TikvDynamicSource(pdAddress, database, table, coordinator);
   }
 }

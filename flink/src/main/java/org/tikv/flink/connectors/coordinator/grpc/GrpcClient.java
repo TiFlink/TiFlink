@@ -1,31 +1,32 @@
-package org.tikv.flink.connectors.coordinators.grpc;
+package org.tikv.flink.connectors.coordinator.grpc;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.net.URI;
 import java.util.concurrent.TimeUnit;
-import org.tikv.flink.connectors.coordinators.ImmutableTransaction;
-import org.tikv.flink.connectors.coordinators.SnapshotCoordinator;
-import org.tikv.flink.connectors.coordinators.Transaction;
-import org.tikv.flink.connectors.coordinators.grpc.Coordinator.TxnRequest;
-import org.tikv.flink.connectors.coordinators.grpc.Coordinator.TxnResponse;
-import org.tikv.flink.connectors.coordinators.grpc.CoordinatorServiceGrpc.CoordinatorServiceBlockingStub;
+import org.tikv.flink.connectors.coordinator.Coordinator;
+import org.tikv.flink.connectors.coordinator.ImmutableTransaction;
+import org.tikv.flink.connectors.coordinator.Transaction;
+import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnRequest;
+import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnResponse;
+import org.tikv.flink.connectors.coordinator.grpc.CoordinatorServiceGrpc.CoordinatorServiceBlockingStub;
 
-class GrpcClient implements SnapshotCoordinator {
-  private final ManagedChannel channel;
-  private final CoordinatorServiceBlockingStub blockingStub;
+class GrpcClient implements Coordinator {
+  private static final long serialVersionUID = -6649512125783014469L;
 
-  GrpcClient(final ManagedChannel channel) {
-    this.channel = channel;
-    blockingStub = CoordinatorServiceGrpc.newBlockingStub(channel);
-  }
+  private final URI serverURI;
 
-  GrpcClient(final String host, final int port) {
-    this(ManagedChannelBuilder.forAddress(host, port).build());
-  }
+  private transient ManagedChannel channel;
+  private transient CoordinatorServiceBlockingStub blockingStub;
 
   GrpcClient(final URI serverURI) {
-    this(serverURI.getHost(), serverURI.getPort());
+    this.serverURI = serverURI;
+  }
+
+  @Override
+  public void open() {
+    channel = ManagedChannelBuilder.forAddress(serverURI.getHost(), serverURI.getPort()).build();
+    blockingStub = CoordinatorServiceGrpc.newBlockingStub(channel);
   }
 
   @Override
