@@ -115,20 +115,14 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
       final Transaction txn,
       final TwoPhaseCommitter committer,
       final Iterable<BytePairWrapper> values) {
+    Preconditions.checkState(txn.isPrewriting(), "Transaction must be prewriting");
     Preconditions.checkNotNull(committer, "Committer can't be null");
     committer.prewriteSecondaryKeys(txn.getPrimaryKey(), values.iterator(), 200);
   }
 
-  protected void commit(final Transaction txn) {
-    coordinator.commitTransaction(txn.getCheckpointId());
-  }
-
-  protected void abort(final Transaction txn) {
-    coordinator.abortTransaction(txn.getCheckpointId());
-  }
-
   protected void commitSecondaryKeys(
       final Transaction txn, final TwoPhaseCommitter committer, final Iterable<ByteWrapper> keys) {
+    Preconditions.checkState(txn.isCommitted(), "Transaction must be committed");
     committer.commitSecondaryKeys(keys.iterator(), txn.getCommitTs(), 200);
   }
 
@@ -165,9 +159,9 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   public void notifyCheckpointComplete(final long checkpointId) throws Exception {
     final TransactionHolder holder = prewrittenTxnHolders.remove(checkpointId);
     if (holder != null) {
-      commit(holder.get());
+      final Transaction txn = coordinator.commitTransaction(holder.get().getCheckpointId());
       if (holder.hasSecondaryKeys()) {
-        final Transaction txn = holder.get();
+        logger.info("commit secondary keys, size: {}, txn: {}", holder.secondaryKeys.size(), txn);
         final TwoPhaseCommitter committer =
             Objects.isNull(holder.getCommitter()) ? createCommitter(txn) : holder.getCommitter();
         commitSecondaryKeys(txn, committer, holder.getSecondaryKeys());
@@ -199,11 +193,12 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
 
     for (final Transaction txn : transactionState.get()) {
       if (txn.isNew()) {
-        abort(txn);
+        coordinator.abortTransaction(txn.getCheckpointId());
       } else {
-        commit(txn);
+        coordinator.commitTransaction(txn.getCheckpointId());
       }
     }
+    transactionState.clear();
 
     txnHolder = new TransactionHolder(coordinator.openTransaction(0));
     transactionState.add(txnHolder.get());

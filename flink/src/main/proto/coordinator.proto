@@ -7,7 +7,7 @@ service CoordinatorService {
 message TxnRequest {
   enum Action {
     OPEN = 0;
-    PRIWRITE = 1;
+    PREWRITE = 1;
     COMMIT = 2;
     ABORT = 3;
     GET = 4;
@@ -25,7 +25,7 @@ message TxnRequest {
 message TxnResponse {
   enum Status {
     NEW = 0;
-    PRIWRITE = 1;
+    PREWRITE = 1;
     COMMITTED = 2;
     ABORTED = 3;
   }

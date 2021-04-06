@@ -38,6 +38,8 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     implements CheckpointListener, CheckpointedFunction, ResultTypeQueryable<RowData> {
   private static final long serialVersionUID = 8647392870748599256L;
 
+  private static final long PUNCTUATE_DURATOIN = 1000_000_000;
+
   private Logger logger = LoggerFactory.getLogger(FlinkTikvConsumer.class);
 
   private final TiConfiguration conf;
@@ -106,46 +108,39 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
   @Override
   public void run(final SourceContext<RowData> ctx) throws Exception {
-    if (taskRegions.isEmpty()) {
-      logger.info("No regions to watch, enter idle state");
-      ctx.markAsTemporarilyIdle();
-    }
-    // scan original table first
-    if (resolvedTs == 0) {
-      synchronized (currentTransaction) {
-        long startTs = currentTransaction.getStartTs();
-        final KVClient scanClient = session.createKVClient();
-        for (final TiRegion region : taskRegions) {
-          for (final KvPair pair :
-              scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
-            if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
-              ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
-            }
-          }
-        }
+    logger.info(
+        "running (thread: {}, tasks: {}/{}, ctx: {})",
+        Thread.currentThread().getId(),
+        this.getRuntimeContext().getIndexOfThisSubtask(),
+        this.getRuntimeContext().getNumberOfParallelSubtasks(),
+        ctx.getClass().getTypeName());
 
-        resolvedTs = startTs;
-        ctx.emitWatermark(new Watermark(resolvedTs));
+    final Object checkpointLock = ctx.getCheckpointLock();
+
+    synchronized (checkpointLock) {
+      // scan original table first
+      if (resolvedTs == 0) {
+        scanRows(ctx);
       }
-    }
 
-    // start consuming CDC
-    client.start();
+      // start consuming CDC
+      logger.info("start consuming CDC");
+      client.start();
 
-    // main loop
-    while (!client.isInitialized()) {
-      handleRow(client.get());
+      while (!client.isInitialized()) {
+        handleRow(client.get());
+      }
+
+      pollRows(ctx); // pull rows for the first transaction
     }
 
     while (true) {
-      handleRow(client.get());
-      if (client.getMinResolvedTs() > resolvedTs + 1_000_000
-          && resolvedTs < currentTransaction.getStartTs()) {
-        synchronized (currentTransaction) {
-          final long nextTs = Math.min(client.getMinResolvedTs(), currentTransaction.getStartTs());
-          flushRows(ctx, nextTs);
-          resolvedTs = nextTs;
-        }
+      while (resolvedTs == currentTransaction.getStartTs()) {
+        Thread.yield();
+      }
+
+      synchronized (checkpointLock) {
+        pollRows(ctx);
       }
     }
   }
@@ -177,9 +172,45 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     }
   }
 
+  protected void scanRows(final SourceContext<RowData> ctx) {
+    logger.info("scan original table");
+    synchronized (currentTransaction) {
+      long startTs = currentTransaction.getStartTs();
+      final KVClient scanClient = session.createKVClient();
+      for (final TiRegion region : taskRegions) {
+        for (final KvPair pair :
+            scanClient.scan(region.getStartKey(), region.getEndKey(), startTs)) {
+          if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
+            ctx.collectWithTimestamp(decodeToRowData(pair), startTs);
+          }
+        }
+      }
+
+      resolvedTs = startTs;
+    }
+  }
+
+  protected void pollRows(final SourceContext<RowData> ctx) throws Exception {
+    synchronized (currentTransaction) {
+      while (resolvedTs < currentTransaction.getStartTs()) {
+        handleRow(client.get());
+        if (resolvedTs + PUNCTUATE_DURATOIN < client.getMinResolvedTs()
+            || currentTransaction.getStartTs() < client.getMinResolvedTs()) {
+          final long nextTs = Math.min(client.getMinResolvedTs(), currentTransaction.getStartTs());
+          flushRows(ctx, nextTs);
+          resolvedTs = nextTs;
+        }
+      }
+    }
+  }
+
   protected void flushRows(final SourceContext<RowData> ctx, final long timestamp) {
-    logger.info("flush rows: {}", timestamp);
-    while (!commits.isEmpty() && commits.firstKey().timestamp < timestamp) {
+    logger.info(
+        "flush rows: {}, timestamp: {}, thread id: {}",
+        commits.size(),
+        timestamp,
+        Thread.currentThread().getId());
+    while (!commits.isEmpty() && commits.firstKey().timestamp <= timestamp) {
       final Row commitRow = commits.pollFirstEntry().getValue();
       final Row prewriteRow = prewrites.remove(RowKeyWithTs.ofStart(commitRow));
       final RowData rowData = decodeToRowData(prewriteRow);
@@ -200,10 +231,10 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
   @Override
   public void snapshotState(final FunctionSnapshotContext context) throws Exception {
-    logger.info("snapshotState checkpoint: {}", context.getCheckpointId());
-    while (resolvedTs < currentTransaction.getStartTs()) {
-      Thread.yield();
-    }
+    logger.info(
+        "snapshotState checkpoint: {}, thread: {}",
+        context.getCheckpointId(),
+        Thread.currentThread().getId());
     synchronized (currentTransaction) {
       resolvedTransactions.clear();
       resolvedTransactions.add(currentTransaction);

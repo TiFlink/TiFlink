@@ -54,16 +54,8 @@ public class GrpcProvider implements CoordinatorProvider, AutoCloseable {
         .collect(Collectors.toList());
   }
 
-  private void start() {
-    try {
-      server.start();
-    } catch (final IOException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
   private static int getRandomPort() {
     final Random rand = new Random();
-    return rand.nextInt() % (MAX_PORT_NUM - MIN_PORT_NUM) + MIN_PORT_NUM;
+    return Math.abs(rand.nextInt()) % (MAX_PORT_NUM - MIN_PORT_NUM) + MIN_PORT_NUM;
   }
 }

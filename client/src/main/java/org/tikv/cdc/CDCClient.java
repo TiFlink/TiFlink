@@ -24,6 +24,7 @@ public class CDCClient implements AutoCloseable, StreamObserver<ChangeDataEvent>
 
   private final boolean started = false;
   private final RegionStateManager rsManager;
+  private final List<TiRegion> regions;
   private final List<RegionCDCClient> regionClients;
   private final BlockingQueue<ChangeDataEvent> eventsBuffer;
   private ChangeDataEvent currentCDCEvent = null;
@@ -38,6 +39,7 @@ public class CDCClient implements AutoCloseable, StreamObserver<ChangeDataEvent>
       final long startTs) {
     assert (conf.getIsolationLevel().equals(IsolationLevel.SI)); // only support SI for now
     this.rsManager = new RegionStateManager(regions);
+    this.regions = regions;
     this.regionClients =
         regions.stream()
             .map(region -> clientBuilder.build(startTs, region, this))

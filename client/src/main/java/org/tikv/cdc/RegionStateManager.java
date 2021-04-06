@@ -5,9 +5,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tikv.common.region.TiRegion;
 
 public class RegionStateManager {
+  private static final Logger logger = LoggerFactory.getLogger(RegionStateManager.class);
   private final long[] minSegTree;
   private final long[] maxSegTree;
   private final Map<Long, Integer> indexMap;
@@ -44,6 +47,7 @@ public class RegionStateManager {
     if (!indexMap.containsKey(regionId)) {
       return 0;
     }
+    logger.info("updateTs for region: {}, resolvedTs: {}", regionId, resolvedTs);
     int index = indexMap.get(regionId);
     minSegTree[index] = resolvedTs;
 

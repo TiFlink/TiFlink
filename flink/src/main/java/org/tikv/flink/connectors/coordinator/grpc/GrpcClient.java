@@ -71,7 +71,7 @@ class GrpcClient implements Coordinator {
   public Transaction prewriteTransaction(long checkpointId, long tableId) {
     return call(
         TxnRequest.newBuilder()
-            .setAction(TxnRequest.Action.PRIWRITE)
+            .setAction(TxnRequest.Action.PREWRITE)
             .setCheckpointId(checkpointId)
             .setTableId(tableId)
             .build());
@@ -118,9 +118,11 @@ class GrpcClient implements Coordinator {
         txnBuilder.status(Transaction.Status.ABORTED);
         break;
       case COMMITTED:
+        Preconditions.checkState(resp.hasCommitTs());
         txnBuilder.status(Transaction.Status.COMMITTED);
         break;
-      case PRIWRITE:
+      case PREWRITE:
+        Preconditions.checkState(resp.hasPrimaryKey());
         txnBuilder.status(Transaction.Status.PREWRITE);
         break;
       default:

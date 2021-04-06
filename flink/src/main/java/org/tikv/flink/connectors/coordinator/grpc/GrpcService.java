@@ -89,13 +89,19 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
 
     synchronized (holder) {
       if (holder.getTxn().isCommitted()) {
+        logger.info("transaction already committed: {}", checkpointId);
         return holder.getTxn();
       }
 
       if (holder.getTxn().isNew()) {
         // No prewrite has done. just return committed status
         holder.setTxn(
-            ImmutableTransaction.builder().from(holder.getTxn()).commitTs(getTimestamp()).build());
+            ImmutableTransaction.builder()
+                .from(holder.getTxn())
+                .status(Transaction.Status.COMMITTED)
+                .commitTs(getTimestamp())
+                .build());
+        logger.info("new transaction committed: {}", checkpointId);
         return holder.getTxn();
       }
 
@@ -121,6 +127,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
               .status(Transaction.Status.COMMITTED)
               .build());
 
+      logger.info("transaction committed: {}", holder.getTxn());
       return holder.getTxn();
     }
   }
@@ -158,7 +165,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
 
   private long getTimestamp() {
     final TiTimestamp ts = tiSession.getTimestamp();
-    return ts.getPhysical();
+    return ts.getVersion();
   }
 
   private void prewritePrimaryKey(final byte[] primaryKey, final TwoPhaseCommitter committer) {
@@ -215,7 +222,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
       case NEW:
         return TxnResponse.Status.NEW;
       case PREWRITE:
-        return TxnResponse.Status.PRIWRITE;
+        return TxnResponse.Status.PREWRITE;
       default:
         throw new UnsupportedOperationException("Unknown status: " + status.toString());
     }
@@ -224,14 +231,13 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
   @Override
   public void transactions(
       final TxnRequest request, final StreamObserver<TxnResponse> responseObserver) {
-    logger.info("server received API call");
     try {
       switch (request.getAction()) {
         case OPEN:
           responseObserver.onNext(
               transactionToResponse(openTransaction(request.getCheckpointId())));
           break;
-        case PRIWRITE:
+        case PREWRITE:
           Preconditions.checkArgument(request.hasTableId(), "TableId can't be empty");
           responseObserver.onNext(
               transactionToResponse(
