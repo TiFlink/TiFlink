@@ -49,7 +49,6 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   private final Coordinator coordinator;
 
   // Task local variables
-  private transient List<TiRegion> taskRegions;
   private transient TiSession session = null;
   private transient CDCClient client = null;
 
@@ -65,12 +64,10 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   public FlinkTikvConsumer(
       final TiConfiguration conf,
       final TiTableInfo tableInfo,
-      final List<TiRegion> regions,
       final TypeInformation<RowData> typeInfo,
       final Coordinator coordinator) {
     this.conf = conf;
     this.tableInfo = tableInfo;
-    this.regions = regions;
     this.typeInfo = typeInfo;
     this.coordinator = coordinator;
   }
@@ -193,6 +190,11 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   protected void pollRows(final SourceContext<RowData> ctx) throws Exception {
     synchronized (currentTransaction) {
       while (resolvedTs < currentTransaction.getStartTs()) {
+        logger.info(
+            "poll rows: {}, resolvedTs:{}, thread id: {}",
+            commits.size(),
+            resolvedTs,
+            Thread.currentThread().getId());
         handleRow(client.get());
         if (resolvedTs + PUNCTUATE_DURATOIN < client.getMinResolvedTs()
             || currentTransaction.getStartTs() < client.getMinResolvedTs()) {

@@ -13,6 +13,7 @@ dependencies {
     implementation 'org.tikv:tikv-client-java:3.0.1'
     implementation 'org.slf4j:slf4j-api:1.7.30'
 
+    implementation "com.google.guava:guava:30.1.1-jre"
     implementation 'io.grpc:grpc-netty-shaded:1.35.0'
     implementation 'io.grpc:grpc-protobuf:1.35.0'
     implementation 'io.grpc:grpc-stub:1.35.0'

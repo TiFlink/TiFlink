@@ -1,33 +1,3 @@
-CREATE TABLE IF NOT EXISTS `authors` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `first_name` varchar(50) COLLATE utf8_unicode_ci,
-  `last_name` varchar(50) COLLATE utf8_unicode_ci,
-  `email` varchar(100) COLLATE utf8_unicode_ci,
-  `birthdate` date,
-  `added` timestamp DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `email` (`email`)
-) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `posts` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `author_id` int(11),
-  `title` varchar(255) COLLATE utf8_unicode_ci,
-  `description` varchar(500) COLLATE utf8_unicode_ci,
-  `content` text COLLATE utf8_unicode_ci,
-  `date` date,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `author_posts` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `first_name` varchar(50) COLLATE utf8_unicode_ci,
-  `last_name` varchar(50) COLLATE utf8_unicode_ci,
-  `email` varchar(100) COLLATE utf8_unicode_ci,
-  `posts` bigint(32),
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
-
 INSERT INTO `authors` (`id`, `first_name`, `last_name`, `email`, `birthdate`, `added`) VALUES (1, 'Jadyn', 'Batz', 'stacy01@example.net', '2004-10-25', '1979-12-03 02:09:51');
 INSERT INTO `authors` (`id`, `first_name`, `last_name`, `email`, `birthdate`, `added`) VALUES (2, 'Jalon', 'Brown', 'rgreen@example.org', '1989-02-28', '2004-08-30 16:49:34');
 INSERT INTO `authors` (`id`, `first_name`, `last_name`, `email`, `birthdate`, `added`) VALUES (3, 'Hayden', 'Hand', 'ebogisich@example.com', '1984-12-17', '1987-04-21 22:49:02');
