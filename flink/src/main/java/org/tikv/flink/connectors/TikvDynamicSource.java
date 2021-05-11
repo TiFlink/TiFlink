@@ -65,7 +65,6 @@ public class TikvDynamicSource implements ScanTableSource {
           new FlinkTikvConsumer(
               conf,
               tableInfo,
-              RegionUtils.getTableRegions(session, tableInfo),
               runtimeProviderContext.createTypeInformation(schemaBuilder.build().toRowDataType()),
               coordinator),
           false);

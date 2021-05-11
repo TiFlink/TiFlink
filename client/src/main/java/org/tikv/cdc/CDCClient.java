@@ -1,19 +1,14 @@
 package org.tikv.cdc;
 
-import com.google.common.base.Preconditions;
-import com.google.common.base.Predicates;
-import com.google.common.collect.Range;
-import com.google.common.collect.TreeMultiset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
+import java.util.Iterator;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tikv.common.TiSession;
@@ -24,7 +19,9 @@ import org.tikv.common.util.RangeSplitter.RegionTask;
 import org.tikv.kvproto.Cdcpb.Event.Row;
 import org.tikv.kvproto.Coprocessor.KeyRange;
 import org.tikv.kvproto.Kvrpcpb.IsolationLevel;
-import shade.com.google.protobuf.ByteString;
+import shade.com.google.common.base.Preconditions;
+import shade.com.google.common.collect.Range;
+import shade.com.google.common.collect.TreeMultiset;
 import shade.io.grpc.ManagedChannel;
 
 public class CDCClient implements AutoCloseable {
@@ -33,8 +30,9 @@ public class CDCClient implements AutoCloseable {
 
   private final TiSession session;
   private final KeyRange keyRange;
+
   private final BlockingQueue<CDCEvent> eventsBuffer = new ArrayBlockingQueue<>(EVENT_BUFFER_SIZE);
-  private final Map<Long, RegionCDCClient> regionClients = new HashMap<>();
+  private final TreeMap<Long, RegionCDCClient> regionClients = new TreeMap<>();
   private final Map<Long, Long> regionToResolvedTs = new HashMap<>();
   private final TreeMultiset<Long> resolvedTsSet = TreeMultiset.create();
 
@@ -59,21 +57,20 @@ public class CDCClient implements AutoCloseable {
   }
 
   public synchronized Row get() throws InterruptedException {
-    while (true) {
-      final CDCEvent event = eventsBuffer.poll(100, TimeUnit.MILLISECONDS);
-      if (event != null) {
-        switch (event.eventType) {
-          case ROW:
-            return event.row;
-          case RESOLVED_TS:
-            handleResolvedTs(event.regionId, event.resolvedTs);
-            break;
-          case ERROR:
-            handleErrorEvent(event.regionId, event.error);
-            break;
-        }
+    final CDCEvent event = eventsBuffer.poll(100, TimeUnit.MILLISECONDS);
+    if (event != null) {
+      switch (event.eventType) {
+        case ROW:
+          return event.row;
+        case RESOLVED_TS:
+          handleResolvedTs(event.regionId, event.resolvedTs);
+          break;
+        case ERROR:
+          handleErrorEvent(event.regionId, event.error);
+          break;
       }
     }
+    return null;
   }
 
   public synchronized long getMinResolvedTs() {
@@ -90,26 +87,49 @@ public class CDCClient implements AutoCloseable {
 
   private synchronized void applyKeyRange(final KeyRange keyRange, final long timestamp) {
     final RangeSplitter splitter = RangeSplitter.newSplitter(session.getRegionManager());
-    final List<TiRegion> regions =
+
+    final Iterator<TiRegion> newRegionsIterator =
         splitter.splitRangeByRegion(Arrays.asList(keyRange)).stream()
             .map(RegionTask::getRegion)
-            .collect(Collectors.toList());
+            .sorted((a, b) -> Long.compare(a.getId(), b.getId()))
+            .iterator();
+    final Iterator<RegionCDCClient> oldRegionsIterator = regionClients.values().iterator();
 
-    final Set<Long> regionsToKeep =
-        regions.stream()
-            .filter(this::shouldKeepRegion)
-            .map(TiRegion::getId)
-            .collect(Collectors.toSet());
+    final ArrayList<TiRegion> regionsToAdd = new ArrayList<>();
+    final ArrayList<Long> regionsToRemove = new ArrayList<>();
 
-    final Set<Long> regionsToRemove =
-        regionClients.keySet().stream()
-            .filter(Predicates.not(regionsToKeep::contains))
-            .collect(Collectors.toSet());
+    TiRegion newRegion = newRegionsIterator.hasNext() ? newRegionsIterator.next() : null;
+    RegionCDCClient oldRegionClient =
+        oldRegionsIterator.hasNext() ? oldRegionsIterator.next() : null;
 
-    final List<TiRegion> regionsToAdd =
-        regions.stream()
-            .filter(region -> !regionsToKeep.contains(region.getId()))
-            .collect(Collectors.toList());
+    while (newRegion != null && oldRegionClient != null) {
+      if (newRegion.getId() == oldRegionClient.getRegion().getId()) {
+        // check if should refresh region
+        if (!oldRegionClient.isRunning()) {
+          regionsToRemove.add(newRegion.getId());
+          regionsToAdd.add(newRegion);
+        }
+
+        newRegion = newRegionsIterator.hasNext() ? newRegionsIterator.next() : null;
+        oldRegionClient = oldRegionsIterator.hasNext() ? oldRegionsIterator.next() : null;
+      } else if (newRegion.getId() < oldRegionClient.getRegion().getId()) {
+        regionsToAdd.add(newRegion);
+        newRegion = newRegionsIterator.hasNext() ? newRegionsIterator.next() : null;
+      } else {
+        regionsToRemove.add(oldRegionClient.getRegion().getId());
+        oldRegionClient = oldRegionsIterator.hasNext() ? oldRegionsIterator.next() : null;
+      }
+    }
+
+    while (newRegion != null) {
+      regionsToAdd.add(newRegion);
+      newRegion = newRegionsIterator.hasNext() ? newRegionsIterator.next() : null;
+    }
+
+    while (oldRegionClient != null) {
+      regionsToRemove.add(oldRegionClient.getRegion().getId());
+      oldRegionClient = oldRegionsIterator.hasNext() ? oldRegionsIterator.next() : null;
+    }
 
     removeRegions(regionsToRemove);
     addRegions(regionsToAdd, timestamp);
@@ -117,18 +137,20 @@ public class CDCClient implements AutoCloseable {
 
   private synchronized void addRegions(final Iterable<TiRegion> regions, final long timestamp) {
     for (final TiRegion region : regions) {
-      final Optional<KeyRange> rangeOpt = regionRangeIntersection(region);
-      if (rangeOpt.isPresent()) {
+      if (overlapWithRegion(region)) {
         final String address = session.getRegionManager().getStoreById(region.getId()).getAddress();
         final ManagedChannel channel = session.getChannelFactory().getChannel(address);
         try (final RegionCDCClient client =
-            new RegionCDCClient(timestamp, region, rangeOpt.get(), channel, eventsBuffer::offer)) {
+            new RegionCDCClient(region, keyRange, channel, eventsBuffer::offer)) {
 
           regionClients.put(region.getId(), client);
           regionToResolvedTs.put(region.getId(), timestamp);
           resolvedTsSet.add(timestamp);
 
-          client.start();
+          client.start(timestamp);
+        } catch (final Exception e) {
+          LOGGER.error("failed to add region(regionId: {}, reason: {})", region.getId(), e);
+          throw new RuntimeException(e);
         }
       }
     }
@@ -136,57 +158,39 @@ public class CDCClient implements AutoCloseable {
 
   private synchronized void removeRegions(final Iterable<Long> regionIds) {
     for (final long regionId : regionIds) {
-      if (regionClients.containsKey(regionId)) {
-        final RegionCDCClient regionClient = regionClients.remove(regionId);
-        resolvedTsSet.remove(regionToResolvedTs.remove(regionId));
+      final RegionCDCClient regionClient = regionClients.remove(regionId);
+      if (regionClient != null) {
         try {
           regionClient.close();
         } catch (final Exception e) {
           LOGGER.error("failed to close region client, region id: {}, error: {}", regionId, e);
+        } finally {
+          resolvedTsSet.remove(regionToResolvedTs.remove(regionId));
+          regionToResolvedTs.remove(regionId);
         }
       }
     }
   }
 
-  private Optional<KeyRange> regionRangeIntersection(final TiRegion region) {
+  private boolean overlapWithRegion(final TiRegion region) {
     final Range<Key> regionRange =
         Range.closedOpen(Key.toRawKey(region.getStartKey()), Key.toRawKey(region.getEndKey()));
     final Range<Key> clientRange =
         Range.closedOpen(Key.toRawKey(keyRange.getStart()), Key.toRawKey(keyRange.getEnd()));
     final Range<Key> intersection = regionRange.intersection(clientRange);
-    if (intersection.isEmpty()) {
-      return Optional.empty();
-    } else {
-      return Optional.of(
-          KeyRange.newBuilder()
-              .setStart(ByteString.copyFrom(intersection.lowerEndpoint().getBytes()))
-              .setEnd(ByteString.copyFrom(intersection.upperEndpoint().getBytes()))
-              .build());
-    }
+    return !intersection.isEmpty();
   }
 
   private void handleResolvedTs(final long regionId, final long resolvedTs) {
-    resolvedTsSet.remove(regionToResolvedTs.get(regionId));
+    resolvedTsSet.remove(regionToResolvedTs.replace(regionId, resolvedTs));
     resolvedTsSet.add(resolvedTs);
   }
 
   private void handleErrorEvent(final long regionId, final Throwable error) {
-    final long resolvedTs = regionToResolvedTs.get(regionId);
     final TiRegion region = regionClients.get(regionId).getRegion();
-
     session.getRegionManager().onRequestFail(region); // invalidate cache for corresponding region
 
     removeRegions(Arrays.asList(regionId));
-    applyKeyRange(keyRange, resolvedTs); // reapply the whole keyRange
-  }
-
-  private boolean shouldKeepRegion(final TiRegion region) {
-    final RegionCDCClient oldClient = regionClients.get(region.getId());
-    if (oldClient != null && oldClient.isRunning()) {
-      final KeyRange newKeyRange =
-          KeyRange.newBuilder().setStart(region.getStartKey()).setEnd(region.getEndKey()).build();
-      return oldClient.getRegionKeyRange().equals(newKeyRange);
-    }
-    return false;
+    applyKeyRange(keyRange, getMinResolvedTs()); // reapply the whole keyRange
   }
 }

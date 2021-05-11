@@ -1,20 +1,12 @@
 package org.tikv.tiflink;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
 import org.tikv.cdc.CDCClient;
-import org.tikv.cdc.RegionCDCClient.RegionCDCClientBuilder;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.common.meta.TiTimestamp;
-import org.tikv.common.region.TiRegion;
-import org.tikv.common.util.RangeSplitter;
-import org.tikv.common.util.RangeSplitter.RegionTask;
+import org.tikv.flink.connectors.TableKeyRangeUtils;
 import org.tikv.kvproto.Cdcpb.Event.Row;
-import org.tikv.kvproto.Coprocessor.KeyRange;
 
 public class CDCClientExample {
   public static void main(String[] args) throws InterruptedException {
@@ -29,24 +21,10 @@ public class CDCClientExample {
     final TiSession session = TiSession.create(conf);
 
     final TiTableInfo tableInfo = session.getCatalog().getTable(dbName, tableName);
-    final KeyRange keyRange =
-        KeyRange.newBuilder()
-            .setStart(RowKey.createMin(tableInfo.getId()).toByteString())
-            .setEnd(RowKey.createBeyondMax(tableInfo.getId()).toByteString())
-            .build();
-
-    final RangeSplitter splitter = RangeSplitter.newSplitter(session.getRegionManager());
-    final List<TiRegion> regions =
-        splitter.splitRangeByRegion(Arrays.asList(keyRange)).stream()
-            .map(RegionTask::getRegion)
-            .collect(Collectors.toList());
-
-    final RegionCDCClientBuilder clientBuilder =
-        new RegionCDCClientBuilder(conf, session.getRegionManager(), session.getChannelFactory());
-    final TiTimestamp startTs = new TiTimestamp(session.getTimestamp().getPhysical(), 0);
     try (final CDCClient client =
-        new CDCClient(conf, clientBuilder, regions, startTs.getVersion())) {
-      client.start();
+        new CDCClient(session, TableKeyRangeUtils.getTableKeyRange(tableInfo.getId()))) {
+
+      client.start(session.getTimestamp().getVersion());
 
       while (true) {
         final Row row = client.get();

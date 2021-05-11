@@ -14,6 +14,7 @@ import org.tikv.kvproto.Cdcpb.ResolvedTs;
 import org.tikv.kvproto.ChangeDataGrpc;
 import org.tikv.kvproto.ChangeDataGrpc.ChangeDataStub;
 import org.tikv.kvproto.Coprocessor.KeyRange;
+import shade.com.google.common.base.Preconditions;
 import shade.io.grpc.ManagedChannel;
 import shade.io.grpc.stub.StreamObserver;
 
@@ -21,7 +22,6 @@ public class RegionCDCClient implements AutoCloseable, StreamObserver<ChangeData
   private static final Logger LOGGER = LoggerFactory.getLogger(RegionCDCClient.class);
   private static final AtomicLong reqIdCounter = new AtomicLong(0);
 
-  private final long startTs;
   private final TiRegion region;
   private final KeyRange keyRange;
   private final KeyRange regionKeyRange;
@@ -30,13 +30,13 @@ public class RegionCDCClient implements AutoCloseable, StreamObserver<ChangeData
   private final Consumer<CDCEvent> eventConsumer;
   private final AtomicBoolean running = new AtomicBoolean(false);
 
+  private boolean started = false;
+
   public RegionCDCClient(
-      final long startTs,
       final TiRegion region,
       final KeyRange keyRange,
       final ManagedChannel channel,
       final Consumer<CDCEvent> eventConsumer) {
-    this.startTs = startTs;
     this.region = region;
     this.keyRange = keyRange;
     this.channel = channel;
@@ -47,8 +47,9 @@ public class RegionCDCClient implements AutoCloseable, StreamObserver<ChangeData
         KeyRange.newBuilder().setStart(region.getStartKey()).setEnd(region.getEndKey()).build();
   }
 
-  public void start() {
+  public synchronized void start(final long startTs) {
     LOGGER.info("start streaming (region: {})", region.getId());
+    Preconditions.checkState(!started, "RegionCDCClient has already started");
     running.set(true);
     final ChangeDataRequest request =
         ChangeDataRequest.newBuilder()
@@ -81,16 +82,20 @@ public class RegionCDCClient implements AutoCloseable, StreamObserver<ChangeData
   }
 
   @Override
-  public void close() {
+  public void close() throws Exception {
     running.set(false);
-    channel.shutdown();
+    synchronized(this) {
+      channel.shutdown();
+    }
     try {
       LOGGER.debug("awaitTermination (region: {})", region.getId());
       channel.awaitTermination(60, TimeUnit.SECONDS);
     } catch (final InterruptedException e) {
+      LOGGER.error("Failed to shutdown channel(regionId: {})", region.getId());
       Thread.currentThread().interrupt();
-    } finally {
-      channel.shutdownNow();
+      synchronized (this) {
+        channel.shutdownNow();
+      }
     }
     LOGGER.info("terminated (region: {})", region.getId());
   }
@@ -104,8 +109,8 @@ public class RegionCDCClient implements AutoCloseable, StreamObserver<ChangeData
   @Override
   public void onError(final Throwable error) {
     LOGGER.error("region CDC error: region: {}, error: {}", region.getId(), error);
-    eventConsumer.accept(CDCEvent.error(region.getId(), error));
     running.set(false);
+    eventConsumer.accept(CDCEvent.error(region.getId(), error));
   }
 
   @Override

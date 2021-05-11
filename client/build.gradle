@@ -8,7 +8,6 @@ plugins {
 }
 
 dependencies {
-    implementation "com.google.guava:guava:30.1.1-jre"
     implementation 'org.tikv:tikv-client-java:4.0.0-SNAPSHOT'
     implementation 'org.slf4j:slf4j-api:1.7.30'
 }
