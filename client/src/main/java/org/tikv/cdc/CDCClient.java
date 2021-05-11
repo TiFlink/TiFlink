@@ -133,16 +133,19 @@ public class CDCClient implements AutoCloseable {
 
     removeRegions(regionsToRemove);
     addRegions(regionsToAdd, timestamp);
+    LOGGER.info("keyRange applied");
   }
 
   private synchronized void addRegions(final Iterable<TiRegion> regions, final long timestamp) {
+    LOGGER.info("add regions: {}, timestamp: {}", regions, timestamp);
     for (final TiRegion region : regions) {
       if (overlapWithRegion(region)) {
-        final String address = session.getRegionManager().getStoreById(region.getId()).getAddress();
+        final String address =
+            session.getRegionManager().getStoreById(region.getLeader().getStoreId()).getAddress();
         final ManagedChannel channel = session.getChannelFactory().getChannel(address);
-        try (final RegionCDCClient client =
-            new RegionCDCClient(region, keyRange, channel, eventsBuffer::offer)) {
-
+        try {
+          final RegionCDCClient client =
+              new RegionCDCClient(region, keyRange, channel, eventsBuffer::offer);
           regionClients.put(region.getId(), client);
           regionToResolvedTs.put(region.getId(), timestamp);
           resolvedTsSet.add(timestamp);
@@ -157,6 +160,7 @@ public class CDCClient implements AutoCloseable {
   }
 
   private synchronized void removeRegions(final Iterable<Long> regionIds) {
+    LOGGER.info("remove regions: {}", regionIds);
     for (final long regionId : regionIds) {
       final RegionCDCClient regionClient = regionClients.remove(regionId);
       if (regionClient != null) {
@@ -182,11 +186,13 @@ public class CDCClient implements AutoCloseable {
   }
 
   private void handleResolvedTs(final long regionId, final long resolvedTs) {
+    LOGGER.info("handle resolvedTs: {}, regionId: {}", resolvedTs, regionId);
     resolvedTsSet.remove(regionToResolvedTs.replace(regionId, resolvedTs));
     resolvedTsSet.add(resolvedTs);
   }
 
   private void handleErrorEvent(final long regionId, final Throwable error) {
+    LOGGER.info("handle error: {}, regionId: {}", error, regionId);
     final TiRegion region = regionClients.get(regionId).getRegion();
     session.getRegionManager().onRequestFail(region); // invalidate cache for corresponding region
 

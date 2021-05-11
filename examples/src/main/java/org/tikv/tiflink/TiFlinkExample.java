@@ -27,10 +27,9 @@ public class TiFlinkExample {
     final StreamExecutionEnvironment env =
         StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
     env.setParallelism(1);
-    env.enableCheckpointing(1000);
+    env.enableCheckpointing(5000);
     env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
     env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
-    env.getCheckpointConfig().setCheckpointTimeout(60000);
     env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
 
     final CoordinatorProvider provider = new GrpcProvider(conf);

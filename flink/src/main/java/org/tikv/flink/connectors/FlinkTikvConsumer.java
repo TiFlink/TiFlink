@@ -147,7 +147,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   }
 
   protected void scanRows(final SourceContext<RowData> ctx) {
-    LOGGER.info("scan original table");
+    LOGGER.debug("scan original table");
     synchronized (currentTransaction) {
       long startTs = currentTransaction.getStartTs();
       final KVClient scanClient = session.createKVClient();
@@ -164,11 +164,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   protected void pollRows(final SourceContext<RowData> ctx) throws Exception {
     synchronized (currentTransaction) {
       while (resolvedTs < currentTransaction.getStartTs()) {
-        LOGGER.info(
-            "poll rows: {}, resolvedTs:{}, thread id: {}",
-            commits.size(),
-            resolvedTs,
-            Thread.currentThread().getId());
+        LOGGER.debug("poll rows: {}, resolvedTs:{}", commits.size(), resolvedTs);
         handleRow(client.get());
         if (resolvedTs + PUNCTUATE_DURATOIN <= client.getMinResolvedTs()
             || currentTransaction.getStartTs() <= client.getMinResolvedTs()) {

@@ -1,5 +1,6 @@
 package org.tikv.cdc;
 
+import java.util.Objects;
 import org.tikv.kvproto.Cdcpb.Event.Row;
 
 class CDCEvent {
@@ -42,5 +43,23 @@ class CDCEvent {
 
   public static CDCEvent error(final long regionId, final Throwable error) {
     return new CDCEvent(regionId, CDCEventType.ERROR, 0, null, error);
+  }
+
+  @Override
+  public String toString() {
+    final StringBuilder builder = new StringBuilder();
+    builder.append("CDCEvent[").append(eventType.toString()).append("] {");
+    switch (eventType) {
+      case ERROR:
+        builder.append("error=").append(error.getMessage());
+        break;
+      case RESOLVED_TS:
+        builder.append("resolvedTs=").append(resolvedTs);
+        break;
+      case ROW:
+        builder.append("row=").append(Objects.toString(row));
+        break;
+    }
+    return builder.append("}").toString();
   }
 }
