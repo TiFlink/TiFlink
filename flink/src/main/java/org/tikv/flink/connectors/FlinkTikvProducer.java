@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import com.google.common.base.Preconditions;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
@@ -24,28 +26,29 @@ import org.slf4j.LoggerFactory;
 import org.tikv.common.BytePairWrapper;
 import org.tikv.common.ByteWrapper;
 import org.tikv.common.TiConfiguration;
-import org.tikv.common.codec.TiTableCodec;
+import org.tikv.common.TiSession;
+import org.tikv.common.codec.TableCodec;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.flink.connectors.coordinator.Coordinator;
 import org.tikv.flink.connectors.coordinator.Transaction;
 import org.tikv.txn.TwoPhaseCommitter;
-import shade.com.google.common.base.Preconditions;
 
 public class FlinkTikvProducer extends RichSinkFunction<RowData>
     implements CheckpointedFunction, CheckpointListener {
 
   private static final long serialVersionUID = 1L;
-
-  private Logger logger = LoggerFactory.getLogger(FlinkTikvProducer.class);
+  private static final Logger LOGGER = LoggerFactory.getLogger(FlinkTikvProducer.class);
 
   private final TiConfiguration conf;
   private final TiTableInfo tableInfo;
   private final FieldGetter[] fieldGetters;
   private final int pkIndex;
   private final Coordinator coordinator;
+  private final AtomicBoolean txnCommitting;
 
+  private transient TiSession session = null;
   private transient volatile TransactionHolder txnHolder;
   private transient List<BytePairWrapper> cachedValues;
   private transient Map<Long, TransactionHolder> prewrittenTxnHolders;
@@ -68,21 +71,24 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     for (int i = 0; i < fieldGetters.length; i++) {
       fieldGetters[i] = TypeUtils.createFieldGetter(colTypes.get(i), i);
     }
-    logger.info("colTypes: {}", colTypes);
+    LOGGER.info("colTypes: {}", colTypes);
 
     Optional<TiColumnInfo> pk =
         tableInfo.getColumns().stream().filter(TiColumnInfo::isPrimaryKey).findFirst();
     Preconditions.checkArgument(pk.isPresent() && TypeUtils.isIntType(pk.get().getType()));
 
     this.pkIndex = tableInfo.getColumns().indexOf(pk.get());
+    this.txnCommitting = new AtomicBoolean();
   }
 
   @Override
   public void open(final Configuration config) throws Exception {
-    logger.info("open sink");
+    LOGGER.info("open sink");
     super.open(config);
+    session = TiSession.create(conf);
     cachedValues = new ArrayList<>();
     prewrittenTxnHolders = new HashMap<>();
+    txnCommitting.set(false);
   }
 
   @Override
@@ -108,7 +114,7 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   }
 
   protected TwoPhaseCommitter createCommitter(final Transaction txn) {
-    return new TwoPhaseCommitter(conf, txn.getStartTs());
+    return new TwoPhaseCommitter(session, txn.getStartTs());
   }
 
   protected void prewrite(
@@ -141,10 +147,10 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
       try {
         return new BytePairWrapper(
             rowKey.getBytes(),
-            TiTableCodec.encodeRow(
+            TableCodec.encodeRow(
                 tableInfo.getColumns(), TypeUtils.toObjects(row, fieldGetters), true, true));
       } catch (final Throwable t) {
-        logger.error("failed to encode row", t);
+        LOGGER.error("failed to encode row", t);
         throw new RuntimeException(t);
       }
     }
@@ -160,8 +166,9 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     final TransactionHolder holder = prewrittenTxnHolders.remove(checkpointId);
     if (holder != null) {
       final Transaction txn = coordinator.commitTransaction(holder.get().getCheckpointId());
+
       if (holder.hasSecondaryKeys()) {
-        logger.info("commit secondary keys, size: {}, txn: {}", holder.secondaryKeys.size(), txn);
+        LOGGER.info("commit secondary keys, size: {}, txn: {}", holder.secondaryKeys.size(), txn);
         final TwoPhaseCommitter committer =
             Objects.isNull(holder.getCommitter()) ? createCommitter(txn) : holder.getCommitter();
         commitSecondaryKeys(txn, committer, holder.getSecondaryKeys());

@@ -20,7 +20,9 @@ import org.tikv.txn.TwoPhaseCommitter;
 class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
     implements AutoCloseable {
   private static Logger logger = LoggerFactory.getLogger(GrpcService.class);
+
   private static byte[] EMPTY_VALUE = new byte[0];
+  private static long TXN_TTL_MS = 20000;
 
   static final int RETAIN_TXNS = 100;
 
@@ -284,7 +286,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
 
     public TwoPhaseCommitter getCommitter() {
       if (committer == null) {
-        committer = new TwoPhaseCommitter(tiSession.getConf(), txn.getStartTs());
+        committer = new TwoPhaseCommitter(tiSession, txn.getStartTs(), TXN_TTL_MS);
       }
       return committer;
     }

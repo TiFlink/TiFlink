@@ -1,5 +1,6 @@
 package org.tikv.tiflink;
 
+import com.google.common.base.Preconditions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -9,7 +10,6 @@ import org.tikv.common.TiConfiguration;
 import org.tikv.flink.connectors.TiFlinkCatalog;
 import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
 import org.tikv.flink.connectors.coordinator.grpc.GrpcProvider;
-import shade.com.google.common.base.Preconditions;
 
 public class TiFlinkExample {
   public static void main(final String[] args) {
@@ -27,7 +27,7 @@ public class TiFlinkExample {
     final StreamExecutionEnvironment env =
         StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
     env.setParallelism(1);
-    env.enableCheckpointing(5000);
+    env.enableCheckpointing(1000);
     env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
     env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
     env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);

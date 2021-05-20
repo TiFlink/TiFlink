@@ -41,7 +41,7 @@ import org.tikv.common.meta.TiIndexInfo;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.flink.connectors.coordinator.Coordinator;
 import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
-import shade.com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMap;
 
 public class TiFlinkCatalog implements Catalog {
 

@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
 import org.tikv.cdc.CDCClient;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
-import org.tikv.common.codec.TiTableCodec;
+import org.tikv.common.codec.TableCodec;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.flink.connectors.coordinator.Coordinator;
@@ -242,12 +242,13 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
         return GenericRowData.ofKind(
             RowKind.DELETE,
             TypeUtils.getObjectsWithDataTypes(
-                TiTableCodec.decodeKeyOnly(handle, tableInfo), tableInfo));
+                TableCodec.decodeObjects(row.getOldValue().toByteArray(), handle, tableInfo),
+                tableInfo));
       case PUT:
         return GenericRowData.ofKind(
             RowKind.INSERT,
             TypeUtils.getObjectsWithDataTypes(
-                TiTableCodec.decodeRow(row.getValue().toByteArray(), handle, tableInfo),
+                TableCodec.decodeObjects(row.getValue().toByteArray(), handle, tableInfo),
                 tableInfo));
       default:
         throw new IllegalArgumentException("Unknown Row Op Type: " + row.getOpType().toString());
@@ -260,7 +261,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     return GenericRowData.ofKind(
         RowKind.INSERT,
         TypeUtils.getObjectsWithDataTypes(
-            TiTableCodec.decodeRow(kvPair.getValue().toByteArray(), handle, tableInfo), tableInfo));
+            TableCodec.decodeObjects(kvPair.getValue().toByteArray(), handle, tableInfo), tableInfo));
   }
 
   protected static class RowKeyWithTs implements Comparable<RowKeyWithTs> {

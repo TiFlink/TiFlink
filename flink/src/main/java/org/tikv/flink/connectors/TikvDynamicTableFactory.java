@@ -14,7 +14,7 @@ import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.factories.FactoryUtil.TableFactoryHelper;
 import org.apache.flink.table.types.DataType;
 import org.tikv.flink.connectors.coordinator.Coordinator;
-import shade.com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSet;
 
 public class TikvDynamicTableFactory implements DynamicTableSourceFactory, DynamicTableSinkFactory {
   public static final String IDENTIFIER = "tiflink";

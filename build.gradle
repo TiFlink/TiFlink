@@ -7,7 +7,6 @@ plugins {
 }
 
 dependencies {
-    implementation project(':client')
     implementation project(':flink')
     implementation project(':examples')
 }
