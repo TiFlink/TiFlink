@@ -1,13 +1,13 @@
 package org.tikv.flink.connectors;
 
+import com.google.common.base.Preconditions;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import com.google.common.base.Preconditions;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
@@ -46,12 +46,12 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   private final FieldGetter[] fieldGetters;
   private final int pkIndex;
   private final Coordinator coordinator;
-  private final AtomicBoolean txnCommitting;
+  private final TransactionHolder txnHolder;
 
   private transient TiSession session = null;
-  private transient volatile TransactionHolder txnHolder;
   private transient List<BytePairWrapper> cachedValues;
-  private transient Map<Long, TransactionHolder> prewrittenTxnHolders;
+  private transient Map<Long, CommitContext> commitContextMap;
+  private transient AtomicBoolean flushBlockingFlag;
 
   // transactions
   protected transient ListState<Transaction> transactionState;
@@ -78,7 +78,7 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     Preconditions.checkArgument(pk.isPresent() && TypeUtils.isIntType(pk.get().getType()));
 
     this.pkIndex = tableInfo.getColumns().indexOf(pk.get());
-    this.txnCommitting = new AtomicBoolean();
+    this.txnHolder = new TransactionHolder();
   }
 
   @Override
@@ -87,18 +87,12 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     super.open(config);
     session = TiSession.create(conf);
     cachedValues = new ArrayList<>();
-    prewrittenTxnHolders = new HashMap<>();
-    txnCommitting.set(false);
+    commitContextMap = new ConcurrentHashMap<>();
+    flushBlockingFlag = new AtomicBoolean(false);
   }
 
   @Override
   public void invoke(final RowData row, final Context context) throws Exception {
-    if (txnHolder.get().isNew() || Objects.isNull(txnHolder.getCommitter())) {
-      final Transaction newTxn =
-          coordinator.prewriteTransaction(txnHolder.get().getCheckpointId(), tableInfo.getId());
-      txnHolder = new TransactionHolder(newTxn, createCommitter(newTxn));
-    }
-
     cachedValues.add(encodeRow(row));
 
     if (cachedValues.size() >= conf.getScanBatchSize()) {
@@ -107,29 +101,54 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
   }
 
   private void flushCachedValues() {
-    prewrite(txnHolder.get(), txnHolder.getCommitter(), cachedValues);
-    txnHolder.addSecondaryKeys(
-        () -> cachedValues.stream().map(BytePairWrapper::getKey).map(ByteWrapper::new).iterator());
+    if (cachedValues.isEmpty()) return;
+
+    while (flushBlockingFlag.getAcquire()) {
+      Thread.yield();
+    }
+
+    synchronized (txnHolder) {
+      if (txnHolder.isNew()) {
+        txnHolder.set(
+            coordinator.prewriteTransaction(txnHolder.getCheckpointId(), tableInfo.getId()));
+      }
+      final Transaction txn = txnHolder.get();
+      final CommitContext ctx = getCommitContext(txn);
+      synchronized (ctx) {
+        prewrite(txn, ctx.getCommitter(), cachedValues.iterator());
+        for (final BytePairWrapper pair : cachedValues) {
+          ctx.addSecondaryKey(pair.getKey());
+        }
+      }
+    }
     cachedValues.clear();
   }
 
-  protected TwoPhaseCommitter createCommitter(final Transaction txn) {
-    return new TwoPhaseCommitter(session, txn.getStartTs());
+  protected CommitContext getCommitContext(final Transaction txn) {
+    final TiSession sess = session;
+    final long startTs = txn.getStartTs();
+
+    return commitContextMap.computeIfAbsent(
+        txn.getCheckpointId(),
+        (key) -> {
+          final TwoPhaseCommitter committer = new TwoPhaseCommitter(sess, startTs);
+          return new CommitContext(committer);
+        });
   }
 
   protected void prewrite(
       final Transaction txn,
       final TwoPhaseCommitter committer,
-      final Iterable<BytePairWrapper> values) {
+      final Iterator<BytePairWrapper> valueIter) {
     Preconditions.checkState(txn.isPrewriting(), "Transaction must be prewriting");
     Preconditions.checkNotNull(committer, "Committer can't be null");
-    committer.prewriteSecondaryKeys(txn.getPrimaryKey(), values.iterator(), 200);
+    committer.prewriteSecondaryKeys(txn.getPrimaryKey(), valueIter, 200);
   }
 
   protected void commitSecondaryKeys(
-      final Transaction txn, final TwoPhaseCommitter committer, final Iterable<ByteWrapper> keys) {
+      final Transaction txn, final TwoPhaseCommitter committer, final Iterator<ByteWrapper> keys) {
     Preconditions.checkState(txn.isCommitted(), "Transaction must be committed");
-    committer.commitSecondaryKeys(keys.iterator(), txn.getCommitTs(), 200);
+    committer.commitSecondaryKeys(keys, txn.getCommitTs(), 200);
   }
 
   public BytePairWrapper encodeRow(final RowData row) {
@@ -163,31 +182,29 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
 
   @Override
   public void notifyCheckpointComplete(final long checkpointId) throws Exception {
-    final TransactionHolder holder = prewrittenTxnHolders.remove(checkpointId);
-    if (holder != null) {
-      final Transaction txn = coordinator.commitTransaction(holder.get().getCheckpointId());
+    LOGGER.info("checkpoint complete, checkpointId: {}", checkpointId);
 
-      if (holder.hasSecondaryKeys()) {
-        LOGGER.info("commit secondary keys, size: {}, txn: {}", holder.secondaryKeys.size(), txn);
-        final TwoPhaseCommitter committer =
-            Objects.isNull(holder.getCommitter()) ? createCommitter(txn) : holder.getCommitter();
-        commitSecondaryKeys(txn, committer, holder.getSecondaryKeys());
-      }
+    final Transaction txn = coordinator.commitTransaction(txnHolder.getCheckpointId());
+    final CommitContext ctx = commitContextMap.remove(txn.getCheckpointId());
+
+    // start new transaction
+    txnHolder.set(coordinator.openTransaction(checkpointId));
+    flushBlockingFlag.setRelease(false);
+
+    if (ctx != null) {
+      commitSecondaryKeys(txn, ctx.getCommitter(), ctx.secondaryKeyIter());
     }
   }
 
   @Override
   public void snapshotState(final FunctionSnapshotContext context) throws Exception {
-    if (!cachedValues.isEmpty()) {
-      flushCachedValues();
-    }
+    LOGGER.info("snapshotState, checkpointId: {}", context.getCheckpointId());
+    flushCachedValues();
 
     transactionState.clear();
     transactionState.add(txnHolder.get());
-    prewrittenTxnHolders.put(context.getCheckpointId(), txnHolder);
 
-    txnHolder = new TransactionHolder(coordinator.openTransaction(context.getCheckpointId()));
-    transactionState.add(txnHolder.get());
+    flushBlockingFlag.setRelease(true);
   }
 
   @Override
@@ -207,60 +224,35 @@ public class FlinkTikvProducer extends RichSinkFunction<RowData>
     }
     transactionState.clear();
 
-    txnHolder = new TransactionHolder(coordinator.openTransaction(0));
+    txnHolder.set(coordinator.openTransaction(0));
     transactionState.add(txnHolder.get());
   }
 
-  static class TransactionHolder implements AutoCloseable {
-    private final Transaction transaction;
+  static class CommitContext {
     private final TwoPhaseCommitter committer;
-    private final List<ByteWrapper> secondaryKeys = new ArrayList<>(); // TODO: use offheap buffer
+    // TODO: use off heap buffer
+    private final List<ByteWrapper> secondaryKeys;
 
-    TransactionHolder(final Transaction txn, final TwoPhaseCommitter committer) {
-      this.transaction = txn;
+    CommitContext(final TwoPhaseCommitter committer) {
       this.committer = committer;
+      secondaryKeys = new ArrayList<>();
     }
 
-    TransactionHolder(final Transaction txn) {
-      this(txn, null);
-    }
-
-    void addSecondaryKey(final ByteWrapper key) {
-      secondaryKeys.add(key);
-    }
-
-    void addSecondaryKeys(final Iterable<ByteWrapper> keys) {
-      for (final ByteWrapper key : keys) {
-        addSecondaryKey(key);
-      }
-    }
-
-    Transaction get() {
-      return transaction;
-    }
-
-    TwoPhaseCommitter getCommitter() {
+    public TwoPhaseCommitter getCommitter() {
       return committer;
     }
 
-    boolean hasSecondaryKeys() {
-      return !secondaryKeys.isEmpty();
+    public Iterator<ByteWrapper> secondaryKeyIter() {
+      return secondaryKeys.iterator();
     }
 
-    Iterable<ByteWrapper> getSecondaryKeys() {
-      return secondaryKeys;
-    }
-
-    @Override
-    public void close() throws Exception {
-      if (Objects.nonNull(committer)) {
-        committer.close();
-      }
+    public void addSecondaryKey(final byte[] key) {
+      secondaryKeys.add(new ByteWrapper(key));
     }
 
     @Override
     protected void finalize() throws Throwable {
-      close();
+      committer.close();
     }
   }
 }

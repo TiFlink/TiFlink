@@ -48,7 +48,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
           holder.setTxn(
               ImmutableTransaction.builder()
                   .checkpointId(checkpointId)
-                  .startTs(getTimestamp())
+                  .startTs(getTimestamp(checkpointId))
                   .build());
           return holder.getTxn();
         } else if (holder.getTxn().isNew()) {
@@ -101,7 +101,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
             ImmutableTransaction.builder()
                 .from(holder.getTxn())
                 .status(Transaction.Status.COMMITTED)
-                .commitTs(getTimestamp())
+                .commitTs(getTimestamp(checkpointId))
                 .build());
         logger.info("new transaction committed: {}", checkpointId);
         return holder.getTxn();
@@ -119,7 +119,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
         }
         trimTransactions();
       }
-      final long commitTs = getTimestamp();
+      final long commitTs = getTimestamp(checkpointId);
       commitPrimaryKey(holder.getTxn().getPrimaryKey(), commitTs, holder.getCommitter());
 
       holder.setTxn(
@@ -165,7 +165,7 @@ class GrpcService extends CoordinatorServiceGrpc.CoordinatorServiceImplBase
     return holder.getTxn();
   }
 
-  private long getTimestamp() {
+  private long getTimestamp(final long checkpointId) {
     final TiTimestamp ts = tiSession.getTimestamp();
     return ts.getVersion();
   }
