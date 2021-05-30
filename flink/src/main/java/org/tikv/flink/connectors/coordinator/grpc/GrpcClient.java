@@ -3,9 +3,7 @@ package org.tikv.flink.connectors.coordinator.grpc;
 import com.google.common.base.Preconditions;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,37 +18,22 @@ class GrpcClient implements Coordinator {
   private static final long serialVersionUID = -6649512125783014469L;
   private static Logger logger = LoggerFactory.getLogger(GrpcClient.class);
 
-  private final List<InetSocketAddress> serverAddresses;
+  private final InetSocketAddress serverAddress;
 
   private transient ManagedChannel channel;
   private transient CoordinatorServiceBlockingStub blockingStub;
 
-  GrpcClient(final List<InetSocketAddress> serverAddresses) {
-    Preconditions.checkArgument(!serverAddresses.isEmpty(), "serverAddresses can't be empty");
-    this.serverAddresses = serverAddresses;
+  GrpcClient(final InetSocketAddress serverAddress) {
+    this.serverAddress = serverAddress;
   }
 
   public void open() {
-    try {
-      final InetSocketAddress address = getReachableServerAddress();
-      logger.info("Client open connection to: {}", address);
-      channel =
-          ManagedChannelBuilder.forAddress(address.getHostName(), address.getPort())
-              .usePlaintext()
-              .build();
-      blockingStub = CoordinatorServiceGrpc.newBlockingStub(channel);
-    } catch (final IOException e) {
-      throw new RuntimeException("Unable to open client", e);
-    }
-  }
-
-  private InetSocketAddress getReachableServerAddress() throws IOException {
-    for (final InetSocketAddress address : serverAddresses) {
-      if (address.getAddress().isReachable(1000)) {
-        return address;
-      }
-    }
-    throw new IOException("Server is not reachable");
+    logger.info("Client open connection to: {}", serverAddress);
+    channel =
+        ManagedChannelBuilder.forAddress(serverAddress.getHostName(), serverAddress.getPort())
+            .usePlaintext()
+            .build();
+    blockingStub = CoordinatorServiceGrpc.newBlockingStub(channel);
   }
 
   @Override

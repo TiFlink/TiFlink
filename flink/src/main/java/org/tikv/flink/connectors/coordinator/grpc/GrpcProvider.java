@@ -1,7 +1,7 @@
 package org.tikv.flink.connectors.coordinator.grpc;
 
 import io.grpc.Server;
-import io.grpc.ServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
@@ -15,15 +15,15 @@ import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
 
 public class GrpcProvider implements CoordinatorProvider, AutoCloseable {
   private static Logger logger = LoggerFactory.getLogger(GrpcProvider.class);
-  private static final int MAX_PORT_NUM = 20000;
-  private static final int MIN_PORT_NUM = 10000;
 
+  private final InetSocketAddress address;
   private final GrpcService service;
   private final Server server;
 
-  public GrpcProvider(final int port, final TiConfiguration conf) {
+  public GrpcProvider(final String host, final int port, final TiConfiguration conf) {
+    this.address = new InetSocketAddress(host, port);
     this.service = new GrpcService(conf);
-    this.server = ServerBuilder.forPort(port).addService(service).build();
+    this.server = NettyServerBuilder.forAddress(address).addService(service).build();
     try {
       logger.info("starting server at: {}", port);
       server.start();
@@ -32,30 +32,13 @@ public class GrpcProvider implements CoordinatorProvider, AutoCloseable {
     }
   }
 
-  public GrpcProvider(final TiConfiguration conf) {
-    this(getRandomPort(), conf);
-  }
-
   @Override
   public Coordinator createCoordinator() {
-    return new GrpcClient(getServerAddresses());
+    return new GrpcClient(address);
   }
 
   @Override
   public void close() throws Exception {
     server.shutdown();
-  }
-
-  public List<InetSocketAddress> getServerAddresses() {
-    return server.getListenSockets().stream()
-        .filter(s -> s instanceof InetSocketAddress)
-        .map(s -> (InetSocketAddress) s)
-        .filter(s -> s.getAddress().isAnyLocalAddress())
-        .collect(Collectors.toList());
-  }
-
-  private static int getRandomPort() {
-    final Random rand = new Random();
-    return Math.abs(rand.nextInt()) % (MAX_PORT_NUM - MIN_PORT_NUM) + MIN_PORT_NUM;
   }
 }

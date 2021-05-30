@@ -1,8 +1,9 @@
 package org.tikv.tiflink;
 
 import com.google.common.base.Preconditions;
-import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.JobManagerOptions;
 import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.environment.RemoteStreamEnvironment;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
@@ -24,15 +25,14 @@ public class TiFlinkExample {
     final EnvironmentSettings settings =
         EnvironmentSettings.newInstance().inStreamingMode().build();
 
-    final StreamExecutionEnvironment env =
-        StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
+    final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
     env.setParallelism(1);
     env.enableCheckpointing(1000);
     env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
     env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
     env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
 
-    final CoordinatorProvider provider = new GrpcProvider(conf);
+    final CoordinatorProvider provider = getCoordinatorProvider(env, conf);
     final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
     tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName, provider));
 
@@ -44,5 +44,16 @@ public class TiFlinkExample {
             "select id, first_name, last_name, email, "
                 + "(select count(*) from posts where author_id = authors.id) as posts from authors")
         .executeInsert(mvTable);
+  }
+
+  public static CoordinatorProvider getCoordinatorProvider(
+      final StreamExecutionEnvironment execEnv, final TiConfiguration conf) {
+    if (execEnv instanceof RemoteStreamEnvironment) {
+      final String host =
+          ((RemoteStreamEnvironment) execEnv).getHost();
+      return new GrpcProvider(host, 56789, conf);
+    } else {
+      return new GrpcProvider("localhost", 56789, conf);
+    }
   }
 }
