@@ -1,10 +1,10 @@
 package org.tikv.flink.connectors;
 
-import java.util.Objects;
+import java.util.Map;
+import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.sink.SinkFunctionProvider;
-import org.apache.flink.table.types.DataType;
 import org.apache.flink.types.RowKind;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
@@ -13,23 +13,20 @@ import org.tikv.flink.connectors.coordinator.Coordinator;
 
 public class TikvDynamicSink implements DynamicTableSink {
 
-  private final String pdAddress;
   private final String database;
   private final String table;
-  private final DataType physicalDataType;
-  private final Coordinator coordinator;
+  private final ResolvedSchema schema;
+  private final Map<String, String> options;
 
   public TikvDynamicSink(
-      final String pdAddress,
       final String database,
       final String table,
-      final DataType dataType,
-      final Coordinator coordinator) {
-    this.pdAddress = pdAddress;
+      final ResolvedSchema schema,
+      final Map<String, String> options) {
     this.database = database;
     this.table = table;
-    this.physicalDataType = dataType;
-    this.coordinator = coordinator;
+    this.schema = schema;
+    this.options = options;
   }
 
   @Override
@@ -43,21 +40,20 @@ public class TikvDynamicSink implements DynamicTableSink {
 
   @Override
   public SinkRuntimeProvider getSinkRuntimeProvider(final Context context) {
-    final TiConfiguration conf = TiConfiguration.createDefault(pdAddress);
-    try (final TiSession session = TiSession.create(conf)) {
+    final TiConfiguration tiConf = TiFlinkOptions.getTiConfiguration(options);
+    try (final TiSession session = TiSession.create(tiConf)) {
       final TiTableInfo tableInfo = session.getCatalog().getTable(database, table);
-      Objects.nonNull(tableInfo);
-
+      final Coordinator coordinator = TiFlinkOptions.getCoordinator(options);
       return SinkFunctionProvider.of(
-          new FlinkTikvProducer(conf, tableInfo, physicalDataType, coordinator));
-    } catch (final Throwable e) {
-      throw new RuntimeException("Can't create consumer", e);
+          new FlinkTikvProducer(tiConf, tableInfo, schema.toPhysicalRowDataType(), coordinator));
+    } catch (final Exception e) {
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public DynamicTableSink copy() {
-    return new TikvDynamicSink(pdAddress, database, table, physicalDataType, coordinator);
+    return new TikvDynamicSink(database, table, schema, options);
   }
 
   @Override

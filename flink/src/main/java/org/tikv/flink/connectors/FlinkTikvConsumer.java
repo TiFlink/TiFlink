@@ -23,8 +23,10 @@ import org.tikv.cdc.CDCClient;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.codec.TableCodec;
+import org.tikv.common.key.Key;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
+import org.tikv.common.util.KeyRangeUtils;
 import org.tikv.flink.connectors.coordinator.Coordinator;
 import org.tikv.flink.connectors.coordinator.Transaction;
 import org.tikv.kvproto.Cdcpb.Event.Row;
@@ -41,8 +43,8 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
   private final TiConfiguration conf;
   private final TiTableInfo tableInfo;
   private final TypeInformation<RowData> typeInfo;
-  private final Coordinator coordinator;
   private final TransactionHolder txnHolder;
+  private final Coordinator coordinator;
 
   // Task local variables
   private transient TiSession session = null;
@@ -106,6 +108,11 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
     LOGGER.debug("handle row: {}", row);
     if (!TypeUtils.isRecordKey(row.getKey().toByteArray())) {
       // Don't handle index key for now
+      return;
+    }
+
+    if (!KeyRangeUtils.makeRange(keyRange.getStart(), keyRange.getEnd())
+        .contains(Key.toRawKey(row.getKey()))) {
       return;
     }
 
@@ -238,11 +245,16 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
                 TableCodec.decodeObjects(row.getOldValue().toByteArray(), handle, tableInfo),
                 tableInfo));
       case PUT:
-        return GenericRowData.ofKind(
-            RowKind.INSERT,
-            TypeUtils.getObjectsWithDataTypes(
-                TableCodec.decodeObjects(row.getValue().toByteArray(), handle, tableInfo),
-                tableInfo));
+        try {
+          return GenericRowData.ofKind(
+              RowKind.INSERT,
+              TypeUtils.getObjectsWithDataTypes(
+                  TableCodec.decodeObjects(row.getValue().toByteArray(), handle, tableInfo),
+                  tableInfo));
+        } catch (final RuntimeException e) {
+          LOGGER.error("error, row: {}, table: {}", row, tableInfo.getId());
+          throw e;
+        }
       default:
         throw new IllegalArgumentException("Unknown Row Op Type: " + row.getOpType().toString());
     }

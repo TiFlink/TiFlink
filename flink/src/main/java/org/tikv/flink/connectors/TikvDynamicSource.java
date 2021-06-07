@@ -1,11 +1,13 @@
 package org.tikv.flink.connectors;
 
-import java.util.Objects;
-import org.apache.flink.table.api.TableSchema;
+import java.util.Map;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.source.DynamicTableSource;
 import org.apache.flink.table.connector.source.ScanTableSource;
 import org.apache.flink.table.connector.source.SourceFunctionProvider;
+import org.apache.flink.table.data.RowData;
 import org.apache.flink.types.RowKind;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
@@ -14,30 +16,30 @@ import org.tikv.flink.connectors.coordinator.Coordinator;
 
 public class TikvDynamicSource implements ScanTableSource {
 
-  private final String pdAddress;
   private final String database;
   private final String table;
-  private final Coordinator coordinator;
+  private final ResolvedSchema schema;
+  private final Map<String, String> options;
 
   public TikvDynamicSource(
-      final String pdAddress,
       final String database,
       final String table,
-      final Coordinator coordinator) {
-    this.pdAddress = pdAddress;
+      final ResolvedSchema schema,
+      final Map<String, String> options) {
     this.database = database;
     this.table = table;
-    this.coordinator = coordinator;
+    this.schema = schema;
+    this.options = options;
   }
 
   @Override
   public DynamicTableSource copy() {
-    return new TikvDynamicSource(pdAddress, database, table, coordinator);
+    return new TikvDynamicSource(database, table, schema, options);
   }
 
   @Override
   public String asSummaryString() {
-    return String.format("TiKV Table[`%s`.`%s`]", database, table);
+    return String.format("TiKV Table[`%s`.`%s`]{%s}", database, table);
   }
 
   @Override
@@ -49,27 +51,17 @@ public class TikvDynamicSource implements ScanTableSource {
   }
 
   @Override
-  public ScanRuntimeProvider getScanRuntimeProvider(final ScanContext runtimeProviderContext) {
-    final TiConfiguration conf = TiConfiguration.createDefault(pdAddress);
-    try (final TiSession session = TiSession.create(conf)) {
+  public ScanRuntimeProvider getScanRuntimeProvider(final ScanContext context) {
+    final TiConfiguration tiConf = TiFlinkOptions.getTiConfiguration(options);
+    try (final TiSession session = TiSession.create(tiConf)) {
       final TiTableInfo tableInfo = session.getCatalog().getTable(database, table);
-      Objects.nonNull(tableInfo);
-
-      final TableSchema.Builder schemaBuilder = TableSchema.builder();
-      tableInfo
-          .getColumns()
-          .forEach(
-              col -> schemaBuilder.field(col.getName(), TypeUtils.getFlinkType(col.getType())));
-
+      final TypeInformation<RowData> typeInfo =
+          context.createTypeInformation(schema.toSourceRowDataType());
+      final Coordinator coordinator = TiFlinkOptions.getCoordinator(options);
       return SourceFunctionProvider.of(
-          new FlinkTikvConsumer(
-              conf,
-              tableInfo,
-              runtimeProviderContext.createTypeInformation(schemaBuilder.build().toRowDataType()),
-              coordinator),
-          false);
-    } catch (final Throwable e) {
-      throw new RuntimeException("Can't create consumer", e);
+          new FlinkTikvConsumer(tiConf, tableInfo, typeInfo, coordinator), false);
+    } catch (final Exception e) {
+      throw new RuntimeException(e);
     }
   }
 }

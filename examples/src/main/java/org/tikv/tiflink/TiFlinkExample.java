@@ -1,7 +1,7 @@
 package org.tikv.tiflink;
 
 import com.google.common.base.Preconditions;
-import org.apache.flink.configuration.JobManagerOptions;
+import java.util.Map;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.environment.RemoteStreamEnvironment;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -9,7 +9,8 @@ import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.tikv.common.TiConfiguration;
 import org.tikv.flink.connectors.TiFlinkCatalog;
-import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
+import org.tikv.flink.connectors.TiFlinkOptions;
+import org.tikv.flink.connectors.coordinator.CoordinatorSupport;
 import org.tikv.flink.connectors.coordinator.grpc.GrpcProvider;
 
 public class TiFlinkExample {
@@ -32,11 +33,32 @@ public class TiFlinkExample {
     env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
     env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
 
-    final CoordinatorProvider provider = getCoordinatorProvider(env, conf);
     final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
-    tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName, provider));
+    final Map<String, String> options =
+        (env instanceof RemoteStreamEnvironment)
+            ? Map.of(
+                TiFlinkOptions.COORDINATOR_PROVIDER_KEY, GrpcProvider.IDENTIFIER,
+                GrpcProvider.HOST_OPTION_KEY, ((RemoteStreamEnvironment) env).getHost(),
+                GrpcProvider.PORT_OPTION_KEY,
+                    String.valueOf(((RemoteStreamEnvironment) env).getPort()))
+            : Map.of();
 
+    final CoordinatorSupport support = TiFlinkOptions.getCoordinatorSupport(options);
+    support.start();
+
+    tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName, options));
     tableEnv.useCatalog("tikv");
+    // final Parser parser = ((TableEnvironmentImpl) tableEnv).getParser();
+    // final List<Operation> operations =
+    //     parser.parse(
+    //         "select id, first_name, last_name, email, (select count(*) from posts where
+    // author_id"
+    //             + " = authors.id) as posts from authors");
+
+    // final QueryOperation operation = (QueryOperation) operations.get(0);
+
+    // System.out.println(operation.getResolvedSchema());
+    //
 
     /* see examples/src/main/resources/example.sql for table schema and data */
     tableEnv
@@ -44,16 +66,5 @@ public class TiFlinkExample {
             "select id, first_name, last_name, email, "
                 + "(select count(*) from posts where author_id = authors.id) as posts from authors")
         .executeInsert(mvTable);
-  }
-
-  public static CoordinatorProvider getCoordinatorProvider(
-      final StreamExecutionEnvironment execEnv, final TiConfiguration conf) {
-    if (execEnv instanceof RemoteStreamEnvironment) {
-      final String host =
-          ((RemoteStreamEnvironment) execEnv).getHost();
-      return new GrpcProvider(host, 56789, conf);
-    } else {
-      return new GrpcProvider("localhost", 56789, conf);
-    }
   }
 }

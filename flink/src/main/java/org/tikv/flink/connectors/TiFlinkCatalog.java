@@ -1,12 +1,14 @@
 package org.tikv.flink.connectors;
 
+import com.google.common.collect.ImmutableMap;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import org.apache.flink.table.api.TableSchema;
+import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogDatabase;
@@ -14,7 +16,7 @@ import org.apache.flink.table.catalog.CatalogDatabaseImpl;
 import org.apache.flink.table.catalog.CatalogFunction;
 import org.apache.flink.table.catalog.CatalogPartition;
 import org.apache.flink.table.catalog.CatalogPartitionSpec;
-import org.apache.flink.table.catalog.CatalogTableImpl;
+import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.catalog.exceptions.DatabaseAlreadyExistException;
@@ -38,17 +40,15 @@ import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiDBInfo;
 import org.tikv.common.meta.TiIndexColumn;
 import org.tikv.common.meta.TiIndexInfo;
+import org.tikv.common.meta.TiPartitionInfo;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
-import com.google.common.collect.ImmutableMap;
 
 public class TiFlinkCatalog implements Catalog {
 
   private final TiConfiguration conf;
   private final String name;
   private final String defaultDatabase;
-  private final CoordinatorProvider coordinatorProvider;
+  private final Map<String, String> tableOptions;
 
   private Optional<TiSession> session = Optional.empty();
 
@@ -56,15 +56,15 @@ public class TiFlinkCatalog implements Catalog {
       final TiConfiguration conf,
       final String name,
       final String defaultDatabase,
-      final CoordinatorProvider coordinatorProvider) {
+      final Map<String, String> defaultOptions) {
     this.conf = conf;
     this.name = name;
     this.defaultDatabase = defaultDatabase;
-    this.coordinatorProvider = coordinatorProvider;
-  }
-
-  public TiFlinkCatalog(final TiConfiguration conf, final CoordinatorProvider coordinatorProvider) {
-    this(conf, "tiflink", "default", coordinatorProvider);
+    this.tableOptions =
+        ImmutableMap.<String, String>builder()
+            .putAll(defaultOptions)
+            .put("connector", "tiflink")
+            .build();
   }
 
   @Override
@@ -171,27 +171,14 @@ public class TiFlinkCatalog implements Catalog {
   @Override
   public CatalogBaseTable getTable(final ObjectPath tablePath)
       throws TableNotExistException, CatalogException {
-    final Map<String, String> tableOptions =
-        ImmutableMap.of(
-            "connector",
-            "tiflink",
-            TikvOptions.PDADDRESS.key(),
-            conf.getPdAddrs().get(0).toString(),
-            TikvOptions.DATABASE.key(),
-            tablePath.getDatabaseName(),
-            TikvOptions.TABLE.key(),
-            tablePath.getObjectName());
-    Optional<TableImpl> res =
+    Optional<CatalogTable> res =
         session
             .flatMap(
                 s ->
                     Optional.ofNullable(
                         s.getCatalog()
                             .getTable(tablePath.getDatabaseName(), tablePath.getObjectName())))
-            .map(
-                t ->
-                    new TableImpl(
-                        getTableSchema(t), tableOptions, coordinatorProvider.createCoordinator()));
+            .map(this::getCatalogTable);
     if (res.isEmpty()) {
       throw new TableNotExistException("name", tablePath);
     }
@@ -392,11 +379,11 @@ public class TiFlinkCatalog implements Catalog {
     throw new UnsupportedOperationException();
   }
 
-  public TableSchema getTableSchema(final TiTableInfo tableInfo) {
-    final TableSchema.Builder builder = TableSchema.builder();
+  public Schema getTableSchema(final TiTableInfo tableInfo) {
+    final Schema.Builder builder = Schema.newBuilder();
     tableInfo
         .getColumns()
-        .forEach(col -> builder.field(col.getName(), TypeUtils.getFlinkType(col.getType())));
+        .forEach(col -> builder.column(col.getName(), TypeUtils.getFlinkType(col.getType())));
     final Optional<TiIndexInfo> pkIndexOptional =
         tableInfo.getIndices().stream().filter(TiIndexInfo::isPrimary).findFirst();
     if (pkIndexOptional.isPresent()) {
@@ -415,19 +402,11 @@ public class TiFlinkCatalog implements Catalog {
     return builder.build();
   }
 
-  public static class TableImpl extends CatalogTableImpl {
-    private final Coordinator coordinator;
-
-    TableImpl(
-        final TableSchema schema,
-        final Map<String, String> properties,
-        final Coordinator coordinator) {
-      super(schema, properties, "");
-      this.coordinator = coordinator;
-    }
-
-    public Coordinator getCoordinator() {
-      return coordinator;
-    }
+  public CatalogTable getCatalogTable(final TiTableInfo tableInfo) {
+    final String comment = Objects.toString(tableInfo.getComment());
+    final TiPartitionInfo partitionInfo = tableInfo.getPartitionInfo();
+    final List<String> partitions =
+        Objects.isNull(partitionInfo) ? List.of() : partitionInfo.getColumns();
+    return CatalogTable.of(getTableSchema(tableInfo), comment, partitions, tableOptions);
   }
 }
