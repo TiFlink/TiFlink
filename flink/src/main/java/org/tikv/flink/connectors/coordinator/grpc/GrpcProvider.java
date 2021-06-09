@@ -1,56 +1,50 @@
 package org.tikv.flink.connectors.coordinator.grpc;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Map;
-import org.apache.flink.configuration.ConfigOption;
-import org.apache.flink.configuration.ConfigOptions;
-import org.apache.flink.configuration.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.tikv.common.TiConfiguration;
 import org.tikv.flink.connectors.TiFlinkOptions;
-import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
-import org.tikv.flink.connectors.coordinator.CoordinatorSupport;
+import org.tikv.flink.connectors.coordinator.Provider;
+import io.grpc.Server;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 
-public class GrpcProvider implements CoordinatorProvider {
-  public static String IDENTIFIER = "grpc";
+public class GrpcProvider implements Provider {
+  private static final Logger LOGGER = LoggerFactory.getLogger(GrpcProvider.class);
 
-  public static String HOST_OPTION_KEY = "tiflink.coordinator.grpc.host";
-  public static String PORT_OPTION_KEY = "tiflink.coordinator.grpc.port";
+  private final InetSocketAddress address;
+  private final GrpcService service;
+  private final Server server;
 
-  public static ConfigOption<String> HOST_OPTION =
-      ConfigOptions.key(HOST_OPTION_KEY)
-          .stringType()
-          .defaultValue("localhost")
-          .withDescription("Host of the running GRPC server");
-
-  public static ConfigOption<Integer> PORT_OPTION =
-      ConfigOptions.key(PORT_OPTION_KEY)
-          .intType()
-          .defaultValue(54321)
-          .withDescription("Host of the running GRPC server");
-
-  @Override
-  public String identifier() {
-    return IDENTIFIER;
+  public GrpcProvider(final String host, final int port, final TiConfiguration conf) {
+    address = new InetSocketAddress(host, port);
+    service = new GrpcService(conf);
+    server = NettyServerBuilder.forAddress(address).addService(service).build();
   }
 
   @Override
-  public Coordinator createCoordinator(final Map<String, String> options) {
-    final Configuration configuration = Configuration.fromMap(options);
+  public Map<String, String> getCoordinatorOptions() {
+    return Map.of(
+        TiFlinkOptions.COORDINATOR_PROVIDER_KEY, GrpcFactory.IDENTIFIER,
+        GrpcFactory.HOST_OPTION_KEY, address.getHostName(),
+        GrpcFactory.PORT_OPTION_KEY, String.valueOf(address.getPort()));
+  }
 
-    final String host = configuration.get(HOST_OPTION);
-    final int port = configuration.get(PORT_OPTION);
-
-    final InetSocketAddress address = InetSocketAddress.createUnresolved(host, port);
-    return new GrpcClient(address);
+  public void start() {
+    try {
+      LOGGER.info("Start GRPC server at: {}", address);
+      server.start();
+    } catch (final IOException e) {
+      LOGGER.error("Failed to start GRPC server", e);
+      throw new RuntimeException(e);
+    }
   }
 
   @Override
-  public CoordinatorSupport createSupport(final Map<String, String> options) {
-    final Configuration configuration = Configuration.fromMap(options);
-
-    final String host = configuration.get(HOST_OPTION);
-    final int port = configuration.get(PORT_OPTION);
-
-    return new GrpcServer(host, port, TiFlinkOptions.getTiConfiguration(options));
+  public void close() throws Exception {
+    LOGGER.info("Stopping GRPC server");
+    server.shutdown();
   }
 }

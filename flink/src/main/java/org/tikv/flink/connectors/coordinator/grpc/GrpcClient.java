@@ -27,6 +27,10 @@ class GrpcClient implements Coordinator {
     this.serverAddress = serverAddress;
   }
 
+  GrpcClient(final String host, final int port) {
+    this(new InetSocketAddress(host, port));
+  }
+
   public void open() {
     logger.info("Client open connection to: {}", serverAddress);
     channel =

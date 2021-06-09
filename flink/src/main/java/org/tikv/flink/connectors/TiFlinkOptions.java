@@ -7,9 +7,9 @@ import org.apache.flink.configuration.Configuration;
 import org.tikv.common.ConfigUtils;
 import org.tikv.common.TiConfiguration;
 import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.CoordinatorProvider;
-import org.tikv.flink.connectors.coordinator.CoordinatorSupport;
-import org.tikv.flink.connectors.coordinator.grpc.GrpcProvider;
+import org.tikv.flink.connectors.coordinator.Factory;
+import org.tikv.flink.connectors.coordinator.Provider;
+import org.tikv.flink.connectors.coordinator.grpc.GrpcFactory;
 
 public class TiFlinkOptions {
   public static String COORDINATOR_PROVIDER_KEY = "tiflink.coordinator.provider";
@@ -61,7 +61,7 @@ public class TiFlinkOptions {
   public static ConfigOption<String> COORDINATOR_PROVIDER =
       ConfigOptions.key(COORDINATOR_PROVIDER_KEY)
           .stringType()
-          .noDefaultValue()
+          .defaultValue(GrpcFactory.IDENTIFIER)
           .withDescription("Coordinator provider name");
 
   public static TiConfiguration getTiConfiguration(final Map<String, String> options) {
@@ -86,18 +86,17 @@ public class TiFlinkOptions {
     return tiConf;
   }
 
-  public static CoordinatorProvider getCoordinatorProvider(final Map<String, String> options) {
+  public static Provider getCoordinatorProvider(final Map<String, String> options) {
     final Configuration configuration = Configuration.fromMap(options);
-    final String providerName =
-        configuration.getOptional(COORDINATOR_PROVIDER).orElse(GrpcProvider.IDENTIFIER);
-    return CoordinatorProvider.get(providerName);
+    final String providerIdentifier = configuration.get(COORDINATOR_PROVIDER);
+
+    return Factory.getFactory(providerIdentifier).createProvider(options);
   }
 
   public static Coordinator getCoordinator(final Map<String, String> options) {
-    return getCoordinatorProvider(options).createCoordinator(options);
-  }
+    final Configuration configuration = Configuration.fromMap(options);
+    final String providerIdentifier = configuration.get(COORDINATOR_PROVIDER);
 
-  public static CoordinatorSupport getCoordinatorSupport(final Map<String, String> options) {
-    return getCoordinatorProvider(options).createSupport(options);
+    return Factory.getFactory(providerIdentifier).createCoordinator(options);
   }
 }

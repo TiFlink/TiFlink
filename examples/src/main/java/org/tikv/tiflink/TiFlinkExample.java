@@ -10,8 +10,8 @@ import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.tikv.common.TiConfiguration;
 import org.tikv.flink.connectors.TiFlinkCatalog;
 import org.tikv.flink.connectors.TiFlinkOptions;
-import org.tikv.flink.connectors.coordinator.CoordinatorSupport;
-import org.tikv.flink.connectors.coordinator.grpc.GrpcProvider;
+import org.tikv.flink.connectors.coordinator.Provider;
+import org.tikv.flink.connectors.coordinator.grpc.GrpcFactory;
 
 public class TiFlinkExample {
   public static void main(final String[] args) {
@@ -34,19 +34,15 @@ public class TiFlinkExample {
     env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
 
     final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
+
     final Map<String, String> options =
         (env instanceof RemoteStreamEnvironment)
-            ? Map.of(
-                TiFlinkOptions.COORDINATOR_PROVIDER_KEY, GrpcProvider.IDENTIFIER,
-                GrpcProvider.HOST_OPTION_KEY, ((RemoteStreamEnvironment) env).getHost(),
-                GrpcProvider.PORT_OPTION_KEY,
-                    String.valueOf(((RemoteStreamEnvironment) env).getPort()))
+            ? Map.of(GrpcFactory.HOST_OPTION_KEY, ((RemoteStreamEnvironment) env).getHost())
             : Map.of();
+    final Provider provider = TiFlinkOptions.getCoordinatorProvider(options);
+    provider.start();
 
-    final CoordinatorSupport support = TiFlinkOptions.getCoordinatorSupport(options);
-    support.start();
-
-    tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName, options));
+    tableEnv.registerCatalog("tikv", new TiFlinkCatalog(conf, "tikv", databaseName, provider.getCoordinatorOptions()));
     tableEnv.useCatalog("tikv");
     // final Parser parser = ((TableEnvironmentImpl) tableEnv).getParser();
     // final List<Operation> operations =

@@ -111,11 +111,6 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
       return;
     }
 
-    if (!KeyRangeUtils.makeRange(keyRange.getStart(), keyRange.getEnd())
-        .contains(Key.toRawKey(row.getKey()))) {
-      return;
-    }
-
     switch (row.getType()) {
       case COMMITTED:
         prewrites.put(RowKeyWithTs.ofStart(row), row);
