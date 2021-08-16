@@ -1,6 +1,7 @@
 package org.tikv.flink.connectors;
 
 import com.google.common.base.Preconditions;
+import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
 import org.apache.flink.api.common.state.CheckpointListener;
@@ -23,15 +24,14 @@ import org.tikv.cdc.CDCClient;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.codec.TableCodec;
-import org.tikv.common.key.Key;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.common.util.KeyRangeUtils;
 import org.tikv.flink.connectors.coordinator.Coordinator;
 import org.tikv.flink.connectors.coordinator.Transaction;
 import org.tikv.kvproto.Cdcpb.Event.Row;
 import org.tikv.kvproto.Coprocessor.KeyRange;
 import org.tikv.kvproto.Kvrpcpb.KvPair;
+import org.tikv.shade.com.google.protobuf.ByteString;
 import org.tikv.txn.KVClient;
 
 public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
@@ -135,10 +135,21 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
 
     final KVClient scanClient = session.createKVClient();
     synchronized (sourceContext) {
-      for (final KvPair pair : scanClient.scan(keyRange.getStart(), keyRange.getEnd(), startTs)) {
-        if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
-          sourceContext.collectWithTimestamp(decodeToRowData(pair), startTs);
+      ByteString start = keyRange.getStart();
+      while (true) {
+        final List<KvPair> segment = scanClient.scan(start, keyRange.getEnd(), startTs);
+
+        if (segment.isEmpty()) {
+          break;
         }
+
+        for (final KvPair pair : segment) {
+          if (TypeUtils.isRecordKey(pair.getKey().toByteArray())) {
+            sourceContext.collectWithTimestamp(decodeToRowData(pair), startTs);
+          }
+        }
+
+        start = RowKey.toRawKey(segment.get(segment.size() - 1).getKey()).next().toByteString();
       }
       sourceContext.emitWatermark(new Watermark(startTs));
     }
