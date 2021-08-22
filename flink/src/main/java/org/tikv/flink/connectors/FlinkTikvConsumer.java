@@ -253,7 +253,7 @@ public class FlinkTikvConsumer extends RichParallelSourceFunction<RowData>
       case PUT:
         try {
           return GenericRowData.ofKind(
-              RowKind.INSERT,
+              row.getOldValue() == null ? RowKind.INSERT : RowKind.UPDATE_AFTER,
               TypeUtils.getObjectsWithDataTypes(
                   TableCodec.decodeObjects(row.getValue().toByteArray(), handle, tableInfo),
                   tableInfo));
