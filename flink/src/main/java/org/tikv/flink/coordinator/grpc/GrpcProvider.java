@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinator.grpc;
+package org.tikv.flink.coordinator.grpc;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -6,8 +6,8 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tikv.common.TiConfiguration;
-import org.tikv.flink.connectors.TiFlinkOptions;
-import org.tikv.flink.connectors.coordinator.Provider;
+import org.tikv.flink.TiFlinkOptions;
+import org.tikv.flink.coordinator.Provider;
 import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 

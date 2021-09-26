@@ -1,7 +1,7 @@
 package org.tikv.flink.connectors;
 
 import java.io.Serializable;
-import org.tikv.flink.connectors.coordinator.Transaction;
+import org.tikv.flink.coordinator.Transaction;
 
 class TransactionHolder implements Transaction, Serializable {
   private static final long serialVersionUID = 1L;

@@ -8,6 +8,7 @@ import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.source.DynamicTableSource;
 import org.apache.flink.table.factories.DynamicTableSinkFactory;
 import org.apache.flink.table.factories.DynamicTableSourceFactory;
+import org.tikv.flink.TiFlinkOptions;
 
 public class TikvDynamicTableFactory implements DynamicTableSourceFactory, DynamicTableSinkFactory {
   public static final String IDENTIFIER = "tiflink";

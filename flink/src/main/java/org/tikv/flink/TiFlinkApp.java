@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors;
+package org.tikv.flink;
 
 import com.google.common.base.Preconditions;
 import java.sql.Connection;
@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.environment.RemoteStreamEnvironment;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -17,11 +19,14 @@ import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.table.catalog.UniqueConstraint;
 import org.apache.flink.table.types.DataType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tikv.common.TiConfiguration;
-import org.tikv.flink.connectors.coordinator.Provider;
-import org.tikv.flink.connectors.coordinator.grpc.GrpcFactory;
+import org.tikv.flink.coordinator.Provider;
+import org.tikv.flink.coordinator.grpc.GrpcFactory;
 
 public class TiFlinkApp implements AutoCloseable {
+  private static final Logger LOGGER = LoggerFactory.getLogger(TiFlinkApp.class);
   private static final String CATALOG_NAME = "tiflink";
 
   private final TiJDBCHelper jdbcHelper;
@@ -68,9 +73,25 @@ public class TiFlinkApp implements AutoCloseable {
     try {
       ensureTargetTable();
 
+      LOGGER.info(
+          "Start coordinator with options: {}", coordinatorProvider.getCoordinatorOptions());
       coordinatorProvider.start();
-      mvTable.executeInsert(jdbcHelper.getQuotedPath(targetDatabase, targetTable));
+
+      final String quotedTargetTable = jdbcHelper.getQuotedPath(targetDatabase, targetTable);
+      LOGGER.info("Execute insert into: {}", quotedTargetTable);
+      final JobExecutionResult result =
+          mvTable
+              .executeInsert(quotedTargetTable)
+              .getJobClient()
+              .get()
+              .getJobExecutionResult()
+              .get();
+      LOGGER.info(
+          "Flink Job {} finished with net runtime {}",
+          result.getJobID(),
+          result.getNetRuntime(TimeUnit.SECONDS));
     } catch (final Exception e) {
+      LOGGER.error("Error running TiFlinkApp", e);
       throw new RuntimeException(e);
     } finally {
       close();
@@ -96,6 +117,7 @@ public class TiFlinkApp implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
+    LOGGER.info("Closing TiFlinkApp");
     coordinatorProvider.close();
     jdbcHelper.close();
   }

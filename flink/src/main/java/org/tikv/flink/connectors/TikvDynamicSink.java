@@ -9,7 +9,8 @@ import org.apache.flink.types.RowKind;
 import org.tikv.common.TiConfiguration;
 import org.tikv.common.TiSession;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.flink.connectors.coordinator.Coordinator;
+import org.tikv.flink.TiFlinkOptions;
+import org.tikv.flink.coordinator.Coordinator;
 
 public class TikvDynamicSink implements DynamicTableSink {
 

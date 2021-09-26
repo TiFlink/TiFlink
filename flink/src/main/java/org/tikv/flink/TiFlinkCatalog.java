@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors;
+package org.tikv.flink;
 
 import com.google.common.collect.ImmutableMap;
 import java.util.Collections;

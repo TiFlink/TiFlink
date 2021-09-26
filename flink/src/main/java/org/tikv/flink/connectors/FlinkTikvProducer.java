@@ -31,8 +31,9 @@ import org.tikv.common.codec.TableCodec;
 import org.tikv.common.key.RowKey;
 import org.tikv.common.meta.TiColumnInfo;
 import org.tikv.common.meta.TiTableInfo;
-import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.Transaction;
+import org.tikv.flink.TypeUtils;
+import org.tikv.flink.coordinator.Coordinator;
+import org.tikv.flink.coordinator.Transaction;
 import org.tikv.txn.TwoPhaseCommitter;
 
 public class FlinkTikvProducer extends RichSinkFunction<RowData>

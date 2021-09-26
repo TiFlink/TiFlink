@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors;
+package org.tikv.flink;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -191,6 +191,6 @@ public class TiJDBCHelper implements AutoCloseable {
   }
 
   private String getColumnDef(final String name, final DataType dataType) {
-    return enquoteIdentifier(name) + " " + dataType.toString();
+    return enquoteIdentifier(name) + " " + TypeUtils.toMySQLTypeString(dataType);
   }
 }

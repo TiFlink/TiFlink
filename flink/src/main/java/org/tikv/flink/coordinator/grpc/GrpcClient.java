@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinator.grpc;
+package org.tikv.flink.coordinator.grpc;
 
 import com.google.common.base.Preconditions;
 import io.grpc.ManagedChannel;
@@ -7,12 +7,12 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.ImmutableTransaction;
-import org.tikv.flink.connectors.coordinator.Transaction;
-import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnRequest;
-import org.tikv.flink.connectors.coordinator.grpc.Coordinator.TxnResponse;
-import org.tikv.flink.connectors.coordinator.grpc.CoordinatorServiceGrpc.CoordinatorServiceBlockingStub;
+import org.tikv.flink.coordinator.Coordinator;
+import org.tikv.flink.coordinator.ImmutableTransaction;
+import org.tikv.flink.coordinator.Transaction;
+import org.tikv.flink.coordinator.grpc.Coordinator.TxnRequest;
+import org.tikv.flink.coordinator.grpc.Coordinator.TxnResponse;
+import org.tikv.flink.coordinator.grpc.CoordinatorServiceGrpc.CoordinatorServiceBlockingStub;
 
 class GrpcClient implements Coordinator {
   private static final long serialVersionUID = -6649512125783014469L;

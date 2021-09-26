@@ -1,7 +1,6 @@
-package org.tikv.flink.connectors;
+package org.tikv.flink;
 
 import static java.lang.String.format;
-
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -22,8 +21,11 @@ import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.DistinctType;
 import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.VarBinaryType;
+import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.types.logical.utils.LogicalTypeChecks;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.Preconditions;
 import org.tikv.common.meta.TiTableInfo;
 import org.tikv.common.types.StringType;
 
@@ -76,15 +78,17 @@ public class TypeUtils {
         return DataTypes.TIME();
       case TypeTinyBlob:
       case TypeMediumBlob:
-      case TypeLongBlob:
       case TypeBlob:
       case TypeVarString:
       case TypeString:
       case TypeVarchar:
+      case TypeLongBlob:
+        Preconditions.checkArgument(
+            dataType.getLength() <= Integer.MAX_VALUE, "Field length exceed maximum");
         if (dataType instanceof StringType) {
-          return DataTypes.STRING();
+          return DataTypes.VARCHAR((int) dataType.getLength());
         }
-        return DataTypes.BYTES();
+        return DataTypes.VARBINARY((int) dataType.getLength());
       case TypeJSON:
       case TypeEnum:
       case TypeSet:
@@ -355,5 +359,40 @@ public class TypeUtils {
       }
       return fieldGetter.getFieldOrNull(row);
     };
+  }
+
+  public static String toMySQLTypeString(final DataType dataType) {
+    switch (dataType.getLogicalType().getTypeRoot()) {
+      case VARBINARY:
+        if (((VarBinaryType) dataType.getLogicalType()).getLength() == Integer.MAX_VALUE) {
+          return "LONGBLOB" + (dataType.getLogicalType().isNullable() ? "" : " NOT NULL");
+        } else {
+          return dataType.toString();
+        }
+      case VARCHAR:
+        if (((VarCharType) dataType.getLogicalType()).getLength() == Integer.MAX_VALUE) {
+          return "LONGTEXT" + (dataType.getLogicalType().isNullable() ? "" : " NOT NULL");
+        } else {
+          return dataType.toString();
+        }
+      case BIGINT:
+      case INTEGER:
+      case DOUBLE:
+      case FLOAT:
+      case CHAR:
+      case BOOLEAN:
+      case DECIMAL:
+      case SMALLINT:
+      case TINYINT:
+      case BINARY:
+      case DATE:
+      case TIMESTAMP_WITHOUT_TIME_ZONE:
+      case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+      case TIMESTAMP_WITH_TIME_ZONE:
+      case TIME_WITHOUT_TIME_ZONE:
+        return dataType.toString();
+      default:
+        throw new IllegalArgumentException("Unsupported field type: " + dataType.toString());
+    }
   }
 }

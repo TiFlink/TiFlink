@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinator.grpc;
+package org.tikv.flink.coordinator.grpc;
 
 import org.tikv.common.codec.Codec.IntegerCodec;
 import org.tikv.common.codec.CodecDataOutput;

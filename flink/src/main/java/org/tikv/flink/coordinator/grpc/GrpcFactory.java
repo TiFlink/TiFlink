@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinator.grpc;
+package org.tikv.flink.coordinator.grpc;
 
 import java.util.Map;
 import java.util.Optional;
@@ -8,10 +8,10 @@ import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.tikv.common.TiConfiguration;
-import org.tikv.flink.connectors.TiFlinkOptions;
-import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.Factory;
-import org.tikv.flink.connectors.coordinator.Provider;
+import org.tikv.flink.TiFlinkOptions;
+import org.tikv.flink.coordinator.Coordinator;
+import org.tikv.flink.coordinator.Factory;
+import org.tikv.flink.coordinator.Provider;
 
 public class GrpcFactory implements Factory {
   public static final String IDENTIFIER = "grpc";

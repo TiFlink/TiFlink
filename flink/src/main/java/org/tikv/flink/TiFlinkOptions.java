@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors;
+package org.tikv.flink;
 
 import java.util.Map;
 import org.apache.flink.configuration.ConfigOption;
@@ -6,10 +6,10 @@ import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.tikv.common.ConfigUtils;
 import org.tikv.common.TiConfiguration;
-import org.tikv.flink.connectors.coordinator.Coordinator;
-import org.tikv.flink.connectors.coordinator.Factory;
-import org.tikv.flink.connectors.coordinator.Provider;
-import org.tikv.flink.connectors.coordinator.grpc.GrpcFactory;
+import org.tikv.flink.coordinator.Coordinator;
+import org.tikv.flink.coordinator.Factory;
+import org.tikv.flink.coordinator.Provider;
+import org.tikv.flink.coordinator.grpc.GrpcFactory;
 
 public class TiFlinkOptions {
   public static String COORDINATOR_PROVIDER_KEY = "tiflink.coordinator.provider";

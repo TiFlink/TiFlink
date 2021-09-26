@@ -1,6 +1,6 @@
 package org.tikv.tiflink;
 
-import org.tikv.flink.connectors.TiFlinkApp;
+import org.tikv.flink.TiFlinkApp;
 
 public class TiFlinkExample {
   public static void main(final String[] args) throws Exception {
@@ -14,7 +14,9 @@ public class TiFlinkExample {
                     + "email, "
                     + "(select count(*) from posts where author_id = authors.id) as posts "
                     + "from authors")
-            .setTargetTable("authors_posts");
+            .setTargetTable("author_posts")
+            .setDropOldTable(true)
+            .setForceNewTable(true);
     try (final TiFlinkApp app = appBuilder.build()) {
       app.start();
     }

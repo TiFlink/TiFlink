@@ -1,4 +1,4 @@
-package org.tikv.flink.connectors.coordinator;
+package org.tikv.flink.coordinator;
 
 import java.util.Iterator;
 import java.util.Map;
