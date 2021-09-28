@@ -1,6 +1,7 @@
 package org.tikv.flink;
 
 import static java.lang.String.format;
+
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -21,7 +22,6 @@ import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.DistinctType;
 import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.VarBinaryType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.types.logical.utils.LogicalTypeChecks;
 import org.apache.flink.types.Row;
@@ -364,17 +364,9 @@ public class TypeUtils {
   public static String toMySQLTypeString(final DataType dataType) {
     switch (dataType.getLogicalType().getTypeRoot()) {
       case VARBINARY:
-        if (((VarBinaryType) dataType.getLogicalType()).getLength() == Integer.MAX_VALUE) {
-          return "LONGBLOB" + (dataType.getLogicalType().isNullable() ? "" : " NOT NULL");
-        } else {
-          return dataType.toString();
-        }
+        return toVarTypeString(dataType, "VARBINARY", "MEDIUMBLOB", "LONGBLOB");
       case VARCHAR:
-        if (((VarCharType) dataType.getLogicalType()).getLength() == Integer.MAX_VALUE) {
-          return "LONGTEXT" + (dataType.getLogicalType().isNullable() ? "" : " NOT NULL");
-        } else {
-          return dataType.toString();
-        }
+        return toVarTypeString(dataType, "VARCHAR", "MEDIUMTEXT", "LONGTEXT");
       case BIGINT:
       case INTEGER:
       case DOUBLE:
@@ -393,6 +385,23 @@ public class TypeUtils {
         return dataType.toString();
       default:
         throw new IllegalArgumentException("Unsupported field type: " + dataType.toString());
+    }
+  }
+
+  private static String toVarTypeString(
+      final DataType dataType,
+      final String varType,
+      final String mediumType,
+      final String longType) {
+    final int length = ((VarCharType) dataType.getLogicalType()).getLength();
+    final boolean isNullable = ((VarCharType) dataType.getLogicalType()).isNullable();
+
+    if (length <= 65535) {
+      return String.format("%s(%d)", varType, Math.max(length, 0)) + (isNullable ? "" : " NOT NULL");
+    } else if (length <= 16777215) {
+      return mediumType + (isNullable ? "" : " NOT NULL");
+    } else {
+      return longType + (isNullable ? "" : " NOT NULL");
     }
   }
 }
