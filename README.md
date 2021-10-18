@@ -37,7 +37,7 @@ Bug reports and contributions are welcome.
 * Java >= 11
 * TiDB/TiKV >= 5.0.0
 * Flink >= 1.13.0
-* tikv/client-java >= 3.2.0
+* tikv/client-java >= 3.2.0 (**Pending release**)
 
 ## Usage
 
